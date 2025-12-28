@@ -1,11 +1,13 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/laravel",
+    "name": "rafael1599/civid",
     "type": "project",
-    "description": "The skeleton application for the Laravel framework.",
+    "description": "CIVID - Autonomous Life Assistant & Personal ERP.",
     "keywords": [
-        "laravel",
-        "framework"
+        "civid",
+        "ai",
+        "erp",
+        "personal-finance"
     ],
     "license": "MIT",
     "require": {

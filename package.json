@@ -1,6 +1,8 @@
 {
     "$schema": "https://www.schemastore.org/package.json",
     "private": true,
+    "name": "civid",
+    "description": "Autonomous Life Assistant Frontend",
     "type": "module",
     "scripts": {
         "build": "vite build",
