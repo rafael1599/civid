@@ -1,21 +1,34 @@
 <?php
 
-// Forward Vercel requests to the standard Laravel entry point
-require __DIR__ . '/../public/index.php';
+use Illuminate\Http\Request;
 
-// Adapt for Vercel's read-only filesystem
+define('LARAVEL_START', microtime(true));
+
+// Helper to determine if we are in maintenance mode
+if (file_exists($maintenance = __DIR__ . '/../storage/framework/maintenance.php')) {
+    require $maintenance;
+}
+
+// 1. Register the Composer autoloader
+require __DIR__ . '/../vendor/autoload.php';
+
+// 2. Bootstrap Laravel
+$app = require_once __DIR__ . '/../bootstrap/app.php';
+
+// 3. Apply Vercel-specific configuration (Read-only filesystem fix)
 if (isset($_ENV['VERCEL'])) {
-    // Set storage path to /tmp which is writable
-    $app->useStoragePath('/tmp/storage');
+    $path = '/tmp/storage';
+    $app->useStoragePath($path);
 
-    // Ensure directories exist
-    if (!is_dir('/tmp/storage')) {
-        mkdir('/tmp/storage', 0777, true);
-        mkdir('/tmp/storage/framework/views', 0777, true);
-        mkdir('/tmp/storage/framework/cache', 0777, true);
-        mkdir('/tmp/storage/framework/sessions', 0777, true);
-        mkdir('/tmp/storage/logs', 0777, true);
+    // Ensure structure exists in /tmp
+    if (!is_dir($path)) {
+        mkdir($path, 0777, true);
+        mkdir($path . '/framework/views', 0777, true);
+        mkdir($path . '/framework/cache', 0777, true);
+        mkdir($path . '/framework/sessions', 0777, true);
+        mkdir($path . '/logs', 0777, true);
     }
 }
 
+// 4. Handle the request
 $app->handleRequest(Request::capture());
