@@ -6,7 +6,8 @@
     "type": "module",
     "scripts": {
         "build": "vite build",
-        "dev": "vite"
+        "dev": "vite",
+        "vercel-build": "vite build"
     },
     "devDependencies": {
         "@headlessui/react": "^2.0.0",
