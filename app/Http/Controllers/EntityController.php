@@ -3,8 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Entity;
-use Inertia\Inertia;
 use Illuminate\Http\Request;
+use Inertia\Inertia;
 
 class EntityController extends Controller
 {
@@ -38,6 +38,7 @@ class EntityController extends Controller
             ->get()
             ->map(function ($event) use ($entity) {
                 $event->context_label = $event->entity_id === $entity->id ? 'este activo' : ($entity->children->find($event->entity_id)->name ?? 'relacionado');
+
                 return $event;
             });
 
@@ -79,10 +80,33 @@ class EntityController extends Controller
             ];
         }
 
+        // --- Asset Health Data (Virtual Odometer) ---
+        $health = null;
+        if ($entity->category === 'ASSET') {
+            $nextService = \App\Models\LifeEvent::where('entity_id', $entity->id)
+                ->where('type', 'SERVICE')
+                ->where('status', 'SCHEDULED')
+                ->orderBy('occurred_at', 'asc')
+                ->first();
+
+            $health = [
+                'virtual_odometer' => $entity->virtual_odometer,
+                'last_manual_odometer' => $entity->metadata['last_manual_odometer'] ?? null,
+                'daily_avg' => $entity->metadata['daily_avg_usage'] ?? null,
+                'next_service' => $nextService ? [
+                    'title' => $nextService->title,
+                    'date' => $nextService->occurred_at->format('Y-m-d'),
+                    'target_odometer' => $nextService->metadata['projected_at_odometer'] ?? null,
+                    'days_left' => now()->diffInDays($nextService->occurred_at, false),
+                ] : null,
+            ];
+        }
+
         return Inertia::render('Entities/Show', [
             'entity' => $entity,
             'alert_status' => $alertStatus,
             'next_urgent_event' => $nextUrgentEvent,
+            'health' => $health,
         ]);
     }
 }

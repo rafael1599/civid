@@ -5,7 +5,6 @@ namespace Database\Seeders;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Str;
 
 class DatabaseSeeder extends Seeder
 {
@@ -30,7 +29,7 @@ class DatabaseSeeder extends Seeder
                 'color' => 'White',
                 'value' => 18000,
             ],
-            'status' => 'ACTIVE'
+            'status' => 'ACTIVE',
         ]);
 
         $vehicle->lifeEvents()->create([
@@ -47,9 +46,9 @@ class DatabaseSeeder extends Seeder
             'category' => 'HEALTH',
             'metadata' => [
                 'blood_type' => 'O+',
-                'allergies' => ['Penicillin']
+                'allergies' => ['Penicillin'],
             ],
-            'status' => 'ACTIVE'
+            'status' => 'ACTIVE',
         ]);
 
         $health->lifeEvents()->create([
@@ -65,7 +64,7 @@ class DatabaseSeeder extends Seeder
         $finance = $user->entities()->create([
             'name' => 'Cuenta BCP Ahorros',
             'category' => 'FINANCE',
-            'status' => 'ACTIVE'
+            'status' => 'ACTIVE',
         ]);
 
         $finance->lifeEvents()->create([
@@ -81,27 +80,14 @@ class DatabaseSeeder extends Seeder
             'name' => 'Seguro Geico',
             'category' => 'SERVICE',
             'metadata' => ['policy_number' => 'G-123456789'],
-            'status' => 'ACTIVE'
+            'status' => 'ACTIVE',
         ]);
 
-        // 6. Relaciones del Grafo (Conexiones)
-        // Toyota Corolla (child) --[INSURED_BY]--> Seguro Geico (parent)
-        // NOTA: La dirección padre/hijo depende de la semántica.
-        // Aquí asumiremos: El Seguro (Parent) cubre al Auto (Child) o El Auto (Parent) tiene un Seguro (Child).
-        // Usemos: Parent = Entidad Principal, Child = Entidad Relacionada/Dependencia.
-        // Entonces: Auto tiene Seguro.
+        // 6. Relaciones Simples (Jerarquía)
+        // El Seguro (Child) depende del Auto (Parent)
+        $insurance->update(['parent_entity_id' => $vehicle->id]);
 
-        $vehicle->children()->attach($insurance->id, [
-            'id' => (string) Str::uuid(),
-            'relationship_type' => 'INSURED_BY'
-        ]);
-
-        // Auto (Parent) tiene Financiamiento (Child) -> Cuenta BCP (usada para pagar/financiar)
-        // O quizas semanticamente: El Banco (Financiera) posee el titulo del Auto.
-        // Hagamos: Auto --[FINANCED_BY]--> Cuenta BCP
-        $vehicle->children()->attach($finance->id, [
-            'id' => (string) Str::uuid(),
-            'relationship_type' => 'FINANCED_BY'
-        ]);
+        // La Cuenta BCP (Child) está vinculada al Auto (Parent - por ejemplo para pagos automáticos)
+        $finance->update(['parent_entity_id' => $vehicle->id]);
     }
 }

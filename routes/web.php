@@ -1,6 +1,5 @@
 <?php
 
-use App\Http\Controllers\EntityRelationshipController;
 use App\Http\Controllers\EventActionController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Foundation\Application;
@@ -26,12 +25,10 @@ Route::middleware('auth')->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
     Route::post('/entities', [\App\Http\Controllers\EntityController::class, 'store'])->name('entities.store');
-    Route::post('/entities/relationships', [\App\Http\Controllers\EntityRelationshipController::class, 'store'])->name('entities.relationships.store');
-    Route::delete('/entities/{entity}/relationships/{child}', [\App\Http\Controllers\EntityRelationshipController::class, 'destroy'])->name('entities.relationships.destroy');
     Route::post('/events/{event}/resolve', [EventActionController::class, 'markAsPaid'])->name('events.mark-as-paid'); // Renamed to match Show.jsx
     Route::post('/events/{event}/undo', [EventActionController::class, 'unmarkAsPaid'])->name('events.undo'); // Added this line
 
     Route::get('/entities/{entity}', [\App\Http\Controllers\EntityController::class, 'show'])->name('entities.show');
 });
 
-require __DIR__ . '/auth.php';
+require __DIR__.'/auth.php';

@@ -2,11 +2,11 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
 use App\Models\Entity;
 use App\Models\LifeEvent;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
 
 class ToyotaSiennaSeeder extends Seeder
@@ -18,7 +18,7 @@ class ToyotaSiennaSeeder extends Seeder
     {
         // 1. Get User (Assuming the first user or create one if none)
         $user = User::first();
-        if (!$user) {
+        if (! $user) {
             // Fallback if no user exists, though likely DatabaseSeeder created one.
             $user = User::factory()->create([
                 'name' => 'Alex Civil',
@@ -41,6 +41,9 @@ class ToyotaSiennaSeeder extends Seeder
                 'image_url' => 'https://delivery-p100417-e924025.adobeaemcloud.com/adobe/dynamicmedia/deliver/urn:aaid:aem:8cc8fa6a-c94b-485c-8f16-778bdc7a1b8c/image.png?size=340,341',
                 'color' => '#FFFFFF',
                 'value' => 35000,
+                'last_manual_odometer' => 15200,
+                'last_manual_odometer_at' => Carbon::now()->subDays(10)->toDateString(),
+                'daily_avg_usage' => 35,
             ],
         ]);
 
@@ -70,7 +73,7 @@ class ToyotaSiennaSeeder extends Seeder
         // Entidad C (Cuenta de Pago - Referencia)
         // Check if exists or create
         $checking = Entity::where('name', 'like', '%Checking Account%')->first();
-        if (!$checking) {
+        if (! $checking) {
             $checking = Entity::create([
                 'id' => (string) Str::uuid(),
                 'user_id' => $user->id,
@@ -79,25 +82,17 @@ class ToyotaSiennaSeeder extends Seeder
                 'status' => 'ACTIVE',
                 'metadata' => [
                     'account_type' => 'Checking',
-                    'last4' => '2827'
+                    'last4' => '2827',
                 ],
             ]);
         }
 
-        // 3. Create Relations
+        // 3. Create Relations (Simplified Hierarchy)
+        // Toyota Financial depends on Sienna
+        $toyotaFinancial->update(['parent_entity_id' => $sienna->id]);
 
-        // Sienna -(FINANCED_BY)-> Toyota Financial
-        $sienna->children()->attach($toyotaFinancial->id, [
-            'id' => (string) Str::uuid(),
-            'relationship_type' => 'FINANCED_BY'
-        ]);
-
-        // Toyota Financial -(PAID_FROM)-> Checking Account
-        $toyotaFinancial->children()->attach($checking->id, [
-            'id' => (string) Str::uuid(),
-            'relationship_type' => 'PAID_FROM'
-        ]);
-
+        // Checking Account depends on Toyota Financial (as its payment source)
+        $checking->update(['parent_entity_id' => $toyotaFinancial->id]);
 
         // 4. Life Events (History)
 
@@ -125,7 +120,7 @@ class ToyotaSiennaSeeder extends Seeder
             'name' => 'Contrato de Financiamiento Toyota.pdf',
             'path' => '#',
             'file_type' => 'PDF',
-            'created_at' => '2022-05-15 10:00:00'
+            'created_at' => '2022-05-15 10:00:00',
         ]);
 
         // Past Events

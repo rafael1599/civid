@@ -2,10 +2,10 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
 use App\Models\Entity;
 use App\Models\LifeEvent;
 use App\Models\User;
+use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
 
 class InsurancePreminsSeeder extends Seeder
@@ -16,7 +16,7 @@ class InsurancePreminsSeeder extends Seeder
     public function run(): void
     {
         $user = User::first();
-        if (!$user) {
+        if (! $user) {
             return;
         }
 
@@ -43,10 +43,7 @@ class InsurancePreminsSeeder extends Seeder
         // 2. Link with Toyota Sienna
         $sienna = Entity::where('name', '2022 Toyota Sienna HV')->first();
         if ($sienna) {
-            $sienna->children()->attach($premins->id, [
-                'id' => (string) Str::uuid(),
-                'relationship_type' => 'INSURED_BY',
-            ]);
+            $premins->update(['parent_entity_id' => $sienna->id]);
         }
 
         // 3. Register LifeEvents

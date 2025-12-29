@@ -1,17 +1,47 @@
 import React, { useState } from 'react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, router } from '@inertiajs/react';
-import LinkEntityModal from '@/Components/LinkEntityModal';
 
-export default function Show({ auth, entity, alert_status, next_urgent_event }) {
-    const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+export default function Show({ auth, entity, alert_status, next_urgent_event, health }) {
+    const isAsset = entity.category === 'ASSET';
 
-    const handleUnlink = (childId) => {
-        if (confirm('¿Estás seguro de que quieres desvincular esta entidad?')) {
-            router.delete(route('entities.relationships.destroy', [entity.id, childId]), {
-                preserveScroll: true,
-            });
-        }
+    const AssetHealthWidget = () => {
+        if (!health) return null;
+
+        const isImminent = health.next_service && health.next_service.days_left <= 30;
+
+        return (
+            <div className={`mt-6 p-6 rounded-2xl border ${isImminent ? 'bg-amber-50 border-amber-100' : 'bg-gray-50 border-gray-100'} transition-all`}>
+                <div className="flex justify-between items-start">
+                    <div>
+                        <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                            </svg>
+                            Salud del Activo (Odómetro Virtual)
+                        </h4>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-3xl font-black text-gray-900">{health.virtual_odometer.toLocaleString()}</span>
+                            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">millas estimadas</span>
+                        </div>
+                    </div>
+                    {health.next_service && (
+                        <div className="text-right">
+                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">{health.next_service.title}</p>
+                            <p className={`text-sm font-black mt-1 ${isImminent ? 'text-amber-600' : 'text-gray-600'}`}>
+                                {health.next_service.date}
+                            </p>
+                            <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase tracking-tighter">
+                                en {health.next_service.days_left} días
+                            </p>
+                        </div>
+                    )}
+                </div>
+                {!health.next_service && (
+                    <p className="text-[10px] italic text-gray-400 mt-4">No hay servicios proyectados. Cuéntale al Omnibox cuando le hagas un servicio.</p>
+                )}
+            </div>
+        );
     };
 
     const handleMarkAsPaid = (eventId, amount) => {
@@ -92,7 +122,7 @@ export default function Show({ auth, entity, alert_status, next_urgent_event }) 
         );
     };
 
-    const isAsset = entity.category === 'ASSET';
+
 
     return (
         <AuthenticatedLayout
@@ -147,7 +177,7 @@ export default function Show({ auth, entity, alert_status, next_urgent_event }) 
                                         </h3>
                                         <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
                                             {entity.metadata && Object.entries(entity.metadata)
-                                                .filter(([k]) => k !== 'image_url')
+                                                .filter(([k]) => !['image_url', 'last_manual_odometer', 'last_manual_odometer_at', 'daily_avg_usage'].includes(k))
                                                 .map(([key, value]) => (
                                                     <div key={key} className="space-y-1">
                                                         <p className="text-[9px] text-gray-400 font-black uppercase tracking-widest">{key.replace('_', ' ')}</p>
@@ -155,6 +185,7 @@ export default function Show({ auth, entity, alert_status, next_urgent_event }) 
                                                     </div>
                                                 ))}
                                         </div>
+                                        <AssetHealthWidget />
                                     </div>
                                 </div>
                             ) : (
@@ -371,7 +402,7 @@ export default function Show({ auth, entity, alert_status, next_urgent_event }) 
                                 {entity.children && entity.children.length > 0 ? (
                                     <div className="space-y-4">
                                         {entity.children.map(child => (
-                                            <div key={child.id} className="relative group">
+                                            <div key={child.id}>
                                                 <Link
                                                     href={route('entities.show', child.id)}
                                                     className="flex items-center gap-4 p-4 bg-gray-50 rounded-2xl border border-transparent hover:border-indigo-100 hover:bg-white hover:shadow-xl transition-all"
@@ -392,18 +423,10 @@ export default function Show({ auth, entity, alert_status, next_urgent_event }) 
                                                     <div className="flex-1 min-w-0">
                                                         <p className="font-bold text-gray-900 text-sm truncate">{child.name}</p>
                                                         <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight truncate">
-                                                            {child.pivot.relationship_type.replace('_', ' ')}
+                                                            {child.category}
                                                         </p>
                                                     </div>
                                                 </Link>
-                                                <button
-                                                    onClick={() => handleUnlink(child.id)}
-                                                    className="absolute -top-1 -right-1 p-1.5 bg-white rounded-full text-gray-300 hover:text-red-500 shadow-sm opacity-0 group-hover:opacity-100 transition-all border border-gray-100"
-                                                >
-                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-                                                    </svg>
-                                                </button>
                                             </div>
                                         ))}
                                     </div>

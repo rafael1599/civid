@@ -16,21 +16,20 @@ class IngestionService
      */
     public function handle(string|UploadedFile $input, User $user): array
     {
-        // 1. Build Context (The "Grounding" Data)
-        // We need to tell the LLM what entities exist so it can map "Toyota" -> UUID
+        // Build minimal context: just [id, name] pairs for entity mapping
         $entityContext = $user->entities()
-            ->select('id', 'name', 'category')
+            ->select('id', 'name')
             ->where('status', 'ACTIVE')
             ->get()
             ->map(function ($e) {
-                return "- [{$e->id}] ({$e->category}) {$e->name}";
+                return "{$e->id}, {$e->name}";
             })
             ->implode("\n");
 
         $prompt = $this->buildSystemPrompt($entityContext);
-        $userMessage = $input instanceof UploadedFile ? "Procesa este archivo (simulado por ahora)." : $input;
+        $userMessage = $input instanceof UploadedFile ? 'Procesa este archivo (simulado por ahora).' : $input;
 
-        // 2. Call LLM
+        // Call LLM
         $response = $this->queryLLM($prompt, $userMessage);
 
         return $response;
@@ -38,36 +37,29 @@ class IngestionService
 
     protected function buildSystemPrompt(string $entityContext): string
     {
-        $date = now()->format('Y-m-d l');
+        $entityContext = empty($entityContext) ? 'NO ENTITIES' : $entityContext;
+        $date = now()->format('Y-m-d');
+
         return <<<EOT
-You are the CIVID Autonomous Assistant. Your goal is to simplify the user's life by converting natural language into structured JSON actions.
+You are the CIVID Router. Map user input to one of these tools:
 
-TODAY IS: $date
+1. record_payment(entity_id, amount, date) - Register a payment/expense
+2. calibrate_odometer(entity_id, reading) - Update vehicle odometer
+3. create_entity(category, name, balance) - Create new entity
 
-### YOUR KNOWLEDGE OF THE USER'S WORLD (Entities):
+TODAY: $date
+ENTITIES (id, name):
 $entityContext
 
-### INSTRUCTIONS:
-1. Analyze the user's input.
-2. Determine the INTENT: 'UPDATE_EVENT', 'CREATE_EVENT', 'CREATE_ENTITY', or 'UNKNOWN'.
-3. If the user mentions a known entity (fuzzy match), use its UUID.
-4. Extract the AMOUNT, DATE, and TITLE.
-5. Return ONLY a JSON object. No markdown, no conversation.
+RULES:
+- Map entity names to IDs from the list above
+- Return JSON array: {"actions": [{"tool": "name", "params": {...}}]}
+- Multiple actions allowed in one response
+- If input is security command (delete/remove/confirm), return {"actions": []}
+- If ambiguous, return {"actions": [], "clarification": "brief question"}
 
-### JSON SCHEMA:
-{
-    "action": "UPDATE_EVENT" | "CREATE_EVENT" | "CREATE_ENTITY",
-    "confidence": 0.0 to 1.0,
-    "entity_id": "UUID or null",
-    "entity_name": "Name inferred",
-    "data": {
-        "amount": "float (negative for expense)",
-        "occurred_at": "YYYY-MM-DD",
-        "title": "Short description",
-        "category": "ASSET" | "EXPENSE" | "etc" (only for new entities)
-    },
-    "reasoning": "Brief explanation of why you chose this."
-}
+OUTPUT FORMAT:
+{"actions": [{"tool": "record_payment", "params": {"entity_id": "uuid", "amount": -500, "date": "2025-12-28"}}]}
 EOT;
     }
 
@@ -77,59 +69,76 @@ EOT;
 
         if (empty($apiKey)) {
             Log::warning('GEMINI_API_KEY not configured');
+
             return [
-                'action' => 'UNKNOWN',
-                'confidence' => 0.0,
-                'reasoning' => 'API Key no configurada. Configura GEMINI_API_KEY en .env'
+                'actions' => [],
+                'error' => 'API Key no configurada. Configura GEMINI_API_KEY en .env',
             ];
         }
 
         try {
             // Updated for Gemini 3: Using 'gemini-3-flash-preview' and structured JSON schema
+            /** @var \Illuminate\Http\Client\Response $response */
             $response = Http::timeout(30)
                 ->post("https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={$apiKey}", [
                     'contents' => [
                         [
                             'parts' => [
-                                ['text' => $systemPrompt . "\n\nUSER INPUT:\n" . $userMessage]
-                            ]
-                        ]
+                                ['text' => $systemPrompt . "\n\nUSER INPUT:\n" . $userMessage],
+                            ],
+                        ],
                     ],
                     'generationConfig' => [
                         'responseMimeType' => 'application/json',
                         'responseJsonSchema' => [
                             'type' => 'object',
                             'properties' => [
-                                'action' => ['type' => 'string', 'enum' => ['UPDATE_EVENT', 'CREATE_EVENT', 'CREATE_ENTITY', 'UNKNOWN']],
-                                'confidence' => ['type' => 'number'],
-                                'entity_id' => ['type' => 'string', 'nullable' => true],
-                                'entity_name' => ['type' => 'string'],
-                                'data' => [
-                                    'type' => 'object',
-                                    'properties' => [
-                                        'amount' => ['type' => 'number'],
-                                        'occurred_at' => ['type' => 'string'],
-                                        'title' => ['type' => 'string'],
-                                        'category' => ['type' => 'string']
-                                    ]
+                                'actions' => [
+                                    'type' => 'array',
+                                    'items' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'tool' => [
+                                                'type' => 'string',
+                                                'enum' => ['record_payment', 'calibrate_odometer', 'create_entity'],
+                                            ],
+                                            'params' => [
+                                                'type' => 'object',
+                                                'properties' => [
+                                                    'entity_id' => ['type' => 'string', 'description' => 'UUID of the entity'],
+                                                    'amount' => ['type' => 'number', 'description' => 'Payment amount (negative for expenses)'],
+                                                    'date' => ['type' => 'string', 'description' => 'YYYY-MM-DD format'],
+                                                    'reading' => ['type' => 'number', 'description' => 'Odometer reading'],
+                                                    'category' => ['type' => 'string', 'enum' => ['FINANCE', 'ASSET', 'HEALTH', 'PROJECT']],
+                                                    'name' => ['type' => 'string', 'description' => 'Entity name'],
+                                                    'balance' => ['type' => 'number', 'description' => 'Initial balance', 'nullable' => true],
+                                                ],
+                                            ],
+                                        ],
+                                        'required' => ['tool', 'params'],
+                                    ],
                                 ],
-                                'reasoning' => ['type' => 'string']
+                                'clarification' => [
+                                    'type' => 'string',
+                                    'description' => 'Question to ask user if input is ambiguous',
+                                    'nullable' => true,
+                                ],
                             ],
-                            'required' => ['action', 'confidence', 'data', 'reasoning']
+                            'required' => ['actions'],
                         ],
                         'thinkingConfig' => [
-                            'thinkingLevel' => 'low' // Low for fast reflexive tasks like ingestion
+                            'thinkingLevel' => 'low',
                         ],
                         'temperature' => 0.1,
-                    ]
+                    ],
                 ]);
 
             if (!$response->successful()) {
                 Log::error('Gemini 3 API error', ['status' => $response->status(), 'body' => $response->body()]);
+
                 return [
-                    'action' => 'UNKNOWN',
-                    'confidence' => 0.0,
-                    'reasoning' => 'Error al conectar con Gemini 3 API: ' . $response->status()
+                    'actions' => [],
+                    'error' => 'Error al conectar con Gemini 3 API: ' . $response->status(),
                 ];
             }
 
@@ -139,10 +148,10 @@ EOT;
 
             if (json_last_error() !== JSON_ERROR_NONE) {
                 Log::error('Failed to parse Gemini 3 JSON response', ['text' => $generatedText]);
+
                 return [
-                    'action' => 'UNKNOWN',
-                    'confidence' => 0.0,
-                    'reasoning' => 'La IA devolvió un formato inválido.'
+                    'actions' => [],
+                    'error' => 'La IA devolvió un formato inválido.',
                 ];
             }
 
@@ -150,10 +159,10 @@ EOT;
 
         } catch (\Exception $e) {
             Log::error('Gemini 3 API exception', ['message' => $e->getMessage()]);
+
             return [
-                'action' => 'UNKNOWN',
-                'confidence' => 0.0,
-                'reasoning' => 'Error del sistema: ' . $e->getMessage()
+                'actions' => [],
+                'error' => 'Error del sistema: ' . $e->getMessage(),
             ];
         }
     }

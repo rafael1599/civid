@@ -4,29 +4,61 @@ namespace App\Http\Controllers;
 
 use App\Services\IngestionService;
 use Illuminate\Http\Request;
-use Inertia\Inertia;
 
 class IngestController extends Controller
 {
     public function __invoke(Request $request, IngestionService $ingestor)
     {
-        $validated = $request->validate([
-            'prompt' => 'nullable|string',
-            'file' => 'nullable|file|mimes:pdf,jpg,png,jpeg',
-        ]);
+        try {
+            $validated = $request->validate([
+                'prompt' => 'nullable|string',
+                'file' => 'nullable|file|mimes:pdf,jpg,png,jpeg',
+            ]);
 
-        if (empty($validated['prompt']) && empty($validated['file'])) {
-            return response()->json(['message' => 'Input required'], 422);
+            if (empty($validated['prompt']) && empty($validated['file'])) {
+                return response()->json(['message' => 'Input required'], 422);
+            }
+
+            $input = $request->hasFile('file') ? $request->file('file') : $validated['prompt'];
+
+            $draft = $ingestor->handle($input, $request->user());
+
+            // Handle clarification requests
+            if (isset($draft['clarification']) && ! empty($draft['clarification'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $draft['clarification'],
+                ], 422);
+            }
+
+            // Handle empty actions (invalid input or security commands)
+            if (empty($draft['actions'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $draft['error'] ?? 'No entendí eso. Prueba con:',
+                    'suggestions' => [
+                        'Pagué el Toyota $500',
+                        'Odo 35000',
+                        'Crear entidad: Tarjeta VISA',
+                    ],
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => true,
+                'draft' => $draft,
+                'original_input' => $validated['prompt'] ?? 'File Upload',
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Ingestion controller failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error en el sistema de ingesta: '.$e->getMessage(),
+            ], 500);
         }
-
-        $input = $request->hasFile('file') ? $request->file('file') : $validated['prompt'];
-
-        $draft = $ingestor->handle($input, $request->user());
-
-        return response()->json([
-            'success' => true,
-            'draft' => $draft,
-            'original_input' => $validated['prompt'] ?? 'File Upload',
-        ]);
     }
 }

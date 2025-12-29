@@ -1,5 +1,5 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head } from '@inertiajs/react';
+import { Head, router } from '@inertiajs/react';
 import AssetCard from '@/Components/AssetCard';
 import { useState } from 'react';
 
@@ -17,34 +17,51 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
 
             setIsLoading(true);
             try {
-                // Using axios directly or Inertia? Axios is better for async non-page-reloads usually, unless we want to use useForm.
-                // Let's use axios for the lightweight "Draft" fetch.
                 const response = await window.axios.post(route('ingest'), { prompt: input });
                 if (response.data.success) {
                     setDraft(response.data.draft);
                 }
             } catch (error) {
                 console.error("Ingestion failed", error);
-                alert("No pude procesar eso. Intenta de nuevo.");
+                if (error.response?.status === 419) {
+                    alert("Tu sesión ha expirado o el token de seguridad es inválido. Por favor, refresca la página.");
+                } else if (error.response?.status === 422) {
+                    // Check for suggestions/clarifications from backend
+                    const data = error.response.data;
+                    if (data.message) {
+                        alert(data.message); // e.g. "Create entity..."
+                    }
+                    if (data.suggestions) {
+                        console.log("Suggestions:", data.suggestions);
+                    }
+                } else {
+                    const msg = error.response?.data?.message || "No pude procesar eso. Intenta de nuevo.";
+                    alert(msg);
+                }
             } finally {
                 setIsLoading(false);
             }
         };
 
-        const confirmDraft = async () => {
+        const confirmDraft = () => {
             setIsLoading(true);
-            try {
-                await window.axios.post(route('ingest.execute'), draft);
-                // Refresh data using Inertia to show the new event in Activity
-                window.location.reload(); // Simple reload for now to see immediate changes
-                setDraft(null);
-                setInput('');
-            } catch (error) {
-                console.error("Execution failed", error);
-                alert("No pude guardar el evento.");
-            } finally {
-                setIsLoading(false);
-            }
+            // We verify draft has actions before sending
+            if (!draft || !draft.actions || draft.actions.length === 0) return;
+
+            router.post(route('ingest.execute'), { actions: draft.actions }, {
+                preserveState: true,
+                onSuccess: () => {
+                    setDraft(null);
+                    setInput('');
+                    setIsLoading(false);
+                },
+                onError: (errors) => {
+                    console.error("Execution failed", errors);
+                    alert("Error al guardar: " + Object.values(errors).join(", "));
+                    setIsLoading(false);
+                },
+                onFinish: () => setIsLoading(false)
+            });
         };
 
         return (
@@ -76,16 +93,18 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
                     </button>
                 </form>
 
-                {/* DRAFT MODAL - Autonomous Assessment */}
+                {/* DRAFT MODAL - Multi-Action Support */}
                 {draft && (
                     <div className="absolute top-full mt-4 left-0 right-0 bg-white rounded-2xl shadow-2xl border border-indigo-100 p-6 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
                         <div className="flex items-start justify-between mb-4">
                             <div>
                                 <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
                                     <span className="text-xl">✨</span>
-                                    Interpretación Autónoma
+                                    Plan de Acción
                                 </h4>
-                                <p className="text-indigo-600 font-bold text-xs mt-1">Confianza: {Math.round(draft.confidence * 100)}%</p>
+                                <p className="text-indigo-600 font-bold text-xs mt-1">
+                                    {draft.actions?.length || 0} acciones propuestas
+                                </p>
                             </div>
                             <button onClick={() => setDraft(null)} className="text-gray-300 hover:text-gray-500">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -94,33 +113,31 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
                             </button>
                         </div>
 
-                        <div className="bg-gray-50 rounded-xl p-4 mb-4 border border-gray-100">
-                            <p className="text-sm font-medium text-gray-800 italic">"{draft.reasoning}"</p>
-                        </div>
+                        {draft.actions && draft.actions.length > 0 ? (
+                            <div className="space-y-4">
+                                {draft.actions.map((action, index) => (
+                                    <div key={index} className="bg-gray-50 rounded-xl p-3 border border-gray-100 text-sm">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="font-black text-indigo-600 uppercase text-[10px] tracking-widest">
+                                                {action.tool.replace('_', ' ')}
+                                            </span>
+                                        </div>
+                                        <ul className="space-y-1">
+                                            {Object.entries(action.params).map(([key, value]) => (
+                                                <li key={key} className="flex justify-between text-xs">
+                                                    <span className="text-gray-500 capitalize">{key.replace('_', ' ')}:</span>
+                                                    <span className="font-medium text-gray-900 truncate max-w-[150px]">{value}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
 
-                        {draft.action !== 'UNKNOWN' ? (
-                            <div className="space-y-3">
-                                <div className="flex justify-between items-center text-sm border-b border-gray-100 pb-2">
-                                    <span className="text-gray-500">Acción</span>
-                                    <span className="font-bold text-gray-900 bg-indigo-50 px-2 py-0.5 rounded text-xs uppercase tracking-wide">{draft.action}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-sm border-b border-gray-100 pb-2">
-                                    <span className="text-gray-500">Entidad</span>
-                                    <span className="font-bold text-gray-900">{draft.entity_name || 'N/A'}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="text-gray-500">Monto / Fecha</span>
-                                    <span className="font-bold text-gray-900">
-                                        {draft.data.amount ? `$${Math.abs(draft.data.amount)}` : 'N/A'}
-                                        <span className="text-gray-300 mx-2">|</span>
-                                        {draft.data.occurred_at}
-                                    </span>
-                                </div>
                                 <button
                                     onClick={confirmDraft}
                                     className="w-full mt-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 active:scale-95 transition-all text-xs uppercase tracking-widest flex items-center justify-center gap-2"
                                 >
-                                    Confirmar Acción
+                                    Confirmar Acciones
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                                     </svg>
@@ -128,7 +145,7 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
                             </div>
                         ) : (
                             <div className="text-center text-rose-500 text-sm font-bold">
-                                No pude entender la intención. Intenta reformular.
+                                No se generaron acciones válidas.
                             </div>
                         )}
                     </div>
