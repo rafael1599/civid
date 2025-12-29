@@ -10,12 +10,17 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
         const [input, setInput] = useState('');
         const [isLoading, setIsLoading] = useState(false);
         const [draft, setDraft] = useState(null);
+        // NEW: System Feedback State (replaces alerts)
+        const [sysFeedback, setSysFeedback] = useState(null);
 
         const handleIngest = async (e) => {
             e.preventDefault();
             if (!input.trim()) return;
 
             setIsLoading(true);
+            setDraft(null);
+            setSysFeedback(null); // Clear previous feedback
+
             try {
                 const response = await window.axios.post(route('ingest'), { prompt: input });
                 if (response.data.success) {
@@ -24,19 +29,20 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
             } catch (error) {
                 console.error("Ingestion failed", error);
                 if (error.response?.status === 419) {
-                    alert("Tu sesión ha expirado o el token de seguridad es inválido. Por favor, refresca la página.");
+                    setSysFeedback({
+                        type: 'error',
+                        message: "Tu sesión ha expirado. Por favor, refresca la página."
+                    });
                 } else if (error.response?.status === 422) {
-                    // Check for suggestions/clarifications from backend
                     const data = error.response.data;
-                    if (data.message) {
-                        alert(data.message); // e.g. "Create entity..."
-                    }
-                    if (data.suggestions) {
-                        console.log("Suggestions:", data.suggestions);
-                    }
+                    setSysFeedback({
+                        type: 'info', // 'info' implies clarification/suggestion needed
+                        message: data.message || "Por favor sé más específico.",
+                        suggestions: data.suggestions || []
+                    });
                 } else {
                     const msg = error.response?.data?.message || "No pude procesar eso. Intenta de nuevo.";
-                    alert(msg);
+                    setSysFeedback({ type: 'error', message: msg });
                 }
             } finally {
                 setIsLoading(false);
@@ -53,11 +59,15 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
                 onSuccess: () => {
                     setDraft(null);
                     setInput('');
+                    setSysFeedback(null);
                     setIsLoading(false);
                 },
                 onError: (errors) => {
                     console.error("Execution failed", errors);
-                    alert("Error al guardar: " + Object.values(errors).join(", "));
+                    setSysFeedback({
+                        type: 'error',
+                        message: "Error al guardar: " + Object.values(errors).join(", ")
+                    });
                     setIsLoading(false);
                 },
                 onFinish: () => setIsLoading(false)
@@ -66,14 +76,15 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
 
         return (
             <div className="relative">
-                <form onSubmit={handleIngest} className="relative">
+                <form onSubmit={handleIngest} className="relative z-20">
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         placeholder="Cuéntame o arrastra un recibo..."
-                        className="w-full pl-5 pr-12 py-3 rounded-2xl border-none shadow-lg shadow-indigo-500/10 focus:ring-2 focus:ring-indigo-500 bg-white/80 backdrop-blur-xl text-sm font-medium text-gray-700 placeholder-gray-400 transition-all hover:bg-white"
+                        className={`w-full pl-5 pr-12 py-3 rounded-2xl border-none shadow-lg shadow-indigo-500/10 focus:ring-2 focus:ring-indigo-500 bg-white/80 backdrop-blur-xl text-sm font-medium text-gray-700 placeholder-gray-400 transition-all hover:bg-white ${sysFeedback?.type === 'error' ? 'ring-2 ring-rose-500/50' : ''}`}
                         disabled={isLoading}
+                        autoFocus
                     />
                     <button
                         type="submit"
@@ -92,6 +103,39 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
                         )}
                     </button>
                 </form>
+
+                {/* FEEDBACK & CLARIFICATION UI (Inline) */}
+                {sysFeedback && !draft && (
+                    <div className={`mt-3 p-4 rounded-2xl text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-300 border ${sysFeedback.type === 'error' ? 'bg-rose-50 text-rose-700 border-rose-100' : 'bg-amber-50 text-gray-800 border-amber-100'}`}>
+                        <div className="flex gap-3">
+                            <span className="text-xl shrink-0">
+                                {sysFeedback.type === 'error' ? '🛑' : '🤔'}
+                            </span>
+                            <div className="flex-1">
+                                <p>{sysFeedback.message}</p>
+                                {sysFeedback.suggestions && sysFeedback.suggestions.length > 0 && (
+                                    <div className="mt-2 space-y-1">
+                                        <p className="text-xs uppercase tracking-widest font-black opacity-50 mb-1">Prueba diciendo:</p>
+                                        {sysFeedback.suggestions.map((sug, i) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => setInput(sug)}
+                                                className="block text-xs bg-white/50 hover:bg-white px-2 py-1 rounded-md transition-colors text-left w-full truncate"
+                                            >
+                                                "{sug}"
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                            <button onClick={() => setSysFeedback(null)} className="opacity-50 hover:opacity-100 self-start">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* DRAFT MODAL - Multi-Action Support */}
                 {draft && (
