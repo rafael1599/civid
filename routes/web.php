@@ -14,6 +14,18 @@ Route::get('/health', function () {
     ]);
 });
 
+Route::get('/debug-files', function () {
+    $path = public_path('build');
+    return response()->json([
+        'public_path' => public_path(),
+        'base_path' => base_path(),
+        'exists' => file_exists($path),
+        'is_dir' => is_dir($path),
+        'files' => is_dir($path) ? scandir($path) : [],
+        'manifest_exists' => file_exists(public_path('build/manifest.json')),
+    ]);
+});
+
 Route::get('/', function () {
     return Inertia::render('Welcome', [
         'canLogin' => Route::has('login'),
