@@ -61,26 +61,6 @@ $app = require_once __DIR__ . '/../bootstrap/app.php';
 
 if ($isVercel) {
     $app->useStoragePath($tmpPath);
-
-    try {
-        // Manually bootstrap the kernel to ensure Config/DB services are ready
-        $kernel = $app->make(\Illuminate\Contracts\Http\Kernel::class);
-        $kernel->bootstrap();
-
-        // Ensure database exists (in case copy failed or environment is fresh)
-        $dbFile = getenv('DB_DATABASE') ?: $tmpDbPath;
-        if (!file_exists($dbFile)) {
-            touch($dbFile);
-        }
-
-        // Run migrations if critical table is missing
-        if (!\Illuminate\Support\Facades\Schema::hasTable('cache')) {
-            \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
-        }
-    } catch (\Throwable $e) {
-        // Log but do not crash immediately, let the request try to proceed or fail naturally
-        error_log('Vercel Boot/Migrate Error: ' . $e->getMessage());
-    }
 }
 
 // 5. Handle the request
