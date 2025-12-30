@@ -5,7 +5,7 @@ use Illuminate\Http\Request;
 define('LARAVEL_START', microtime(true));
 
 // 1. Register the Composer autoloader
-require __DIR__.'/../vendor/autoload.php';
+require __DIR__ . '/../vendor/autoload.php';
 
 // 2. Determine if we are on Vercel
 $isVercel = getenv('VERCEL') === '1' || isset($_SERVER['VERCEL']);
@@ -17,14 +17,14 @@ if ($isVercel) {
     // Create necessary directories in /tmp
     $dirs = [
         $tmpPath,
-        $tmpPath.'/framework/views',
-        $tmpPath.'/framework/cache',
-        $tmpPath.'/framework/sessions',
-        $tmpPath.'/logs',
+        $tmpPath . '/framework/views',
+        $tmpPath . '/framework/cache',
+        $tmpPath . '/framework/sessions',
+        $tmpPath . '/logs',
     ];
 
     foreach ($dirs as $dir) {
-        if (! is_dir($dir)) {
+        if (!is_dir($dir)) {
             @mkdir($dir, 0777, true);
         }
     }
@@ -39,9 +39,9 @@ if ($isVercel) {
     putenv('VIEW_COMPILED_PATH=/tmp/framework/views');
 
     // SQLite handling
-    $dbPath = __DIR__.'/../database/database.sqlite';
+    $dbPath = __DIR__ . '/../database/database.sqlite';
     $tmpDbPath = '/tmp/database.sqlite';
-    if (file_exists($dbPath) && ! file_exists($tmpDbPath)) {
+    if (file_exists($dbPath) && !file_exists($tmpDbPath)) {
         if (@copy($dbPath, $tmpDbPath)) {
             putenv("DB_DATABASE={$tmpDbPath}");
             $_ENV['DB_DATABASE'] = $tmpDbPath;
@@ -51,16 +51,33 @@ if ($isVercel) {
         }
     }
 
-    if (! getenv('APP_KEY')) {
+    if (!getenv('APP_KEY')) {
         error_log('CRITICAL: APP_KEY is missing in Vercel environment!');
     }
 }
 
 // 4. Bootstrap Laravel
-$app = require_once __DIR__.'/../bootstrap/app.php';
+$app = require_once __DIR__ . '/../bootstrap/app.php';
 
 if ($isVercel) {
     $app->useStoragePath($tmpPath);
+
+    // Override the database config to point to the temporary SQLite file
+    $app->make('config')->set('database.connections.sqlite.database', getenv('DB_DATABASE') ?: $tmpDbPath);
+
+    // Ensure database exists and is migrated
+    if (!file_exists($tmpDbPath)) {
+        touch($tmpDbPath);
+    }
+
+    // Automatically run migrations if tables are missing (basic check)
+    try {
+        if (!\Illuminate\Support\Facades\Schema::hasTable('cache')) {
+            \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
+        }
+    } catch (\Throwable $e) {
+        error_log('Migration failed: ' . $e->getMessage());
+    }
 }
 
 // 5. Handle the request
@@ -69,17 +86,17 @@ try {
     $app->handleRequest($request);
 } catch (\Throwable $e) {
     // Log fatal errors to stderr for Vercel logs
-    error_log('FATAL ERROR: '.$e->getMessage());
-    error_log('File: '.$e->getFile().' Line: '.$e->getLine());
+    error_log('FATAL ERROR: ' . $e->getMessage());
+    error_log('File: ' . $e->getFile() . ' Line: ' . $e->getLine());
     error_log($e->getTraceAsString());
 
     if (getenv('APP_DEBUG') === 'true') {
         header('Content-Type: text/html');
         echo '<h1>Fatal Error</h1>';
-        echo '<p><b>Message:</b> '.htmlspecialchars($e->getMessage()).'</p>';
-        echo '<p><b>File:</b> '.$e->getFile().':'.$e->getLine().'</p>';
+        echo '<p><b>Message:</b> ' . htmlspecialchars($e->getMessage()) . '</p>';
+        echo '<p><b>File:</b> ' . $e->getFile() . ':' . $e->getLine() . '</p>';
         echo '<h3>Stack Trace:</h3>';
-        echo '<pre>'.htmlspecialchars($e->getTraceAsString()).'</pre>';
+        echo '<pre>' . htmlspecialchars($e->getTraceAsString()) . '</pre>';
     } else {
         header('HTTP/1.1 500 Internal Server Error');
         echo 'Internal Server Error';
