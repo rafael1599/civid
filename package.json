@@ -5,7 +5,7 @@
     "description": "Autonomous Life Assistant Frontend",
     "type": "module",
     "scripts": {
-        "build": "vite build",
+        "build": "vite build && mkdir dist",
         "dev": "vite",
         "vercel-build": "vite build"
     },
