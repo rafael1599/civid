@@ -1,26 +1,19 @@
 {
     "version": 2,
-    "builds": [
-        {
-            "src": "api/index.php",
-            "use": "vercel-php@0.7.4",
-            "config": {
-                "includeFiles": [
-                    "public/build/**",
-                    "resources/views/**",
-                    "config/**",
-                    "routes/**",
-                    "bootstrap/**",
-                    "storage/**",
-                    "database/**"
-                ]
-            }
-        },
-        {
-            "src": "public/**",
-            "use": "@vercel/static"
+    "functions": {
+        "api/index.php": {
+            "runtime": "vercel-php@0.7.4",
+            "includeFiles": [
+                "public/build/**",
+                "resources/views/**",
+                "config/**",
+                "routes/**",
+                "bootstrap/**",
+                "storage/**",
+                "database/**"
+            ]
         }
-    ],
+    },
     "routes": [
         {
             "src": "/build/(.*)",
