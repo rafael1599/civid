@@ -38,6 +38,7 @@ class Entity extends Model
         return $this->hasMany(Document::class);
     }
 
+    // Legacy relationships using parent_entity_id (deprecated)
     public function children(): HasMany
     {
         return $this->hasMany(Entity::class, 'parent_entity_id');
@@ -46,6 +47,45 @@ class Entity extends Model
     public function parent(): BelongsTo
     {
         return $this->belongsTo(Entity::class, 'parent_entity_id');
+    }
+
+    // New flexible relationships using entity_relationships pivot table
+    public function parentRelationships(): HasMany
+    {
+        return $this->hasMany(EntityRelationship::class, 'child_entity_id');
+    }
+
+    public function childRelationships(): HasMany
+    {
+        return $this->hasMany(EntityRelationship::class, 'parent_entity_id');
+    }
+
+    /**
+     * Get all parent entities (entities that provide/cover/finance this entity)
+     * Example: Insurance that covers this car, Bank that finances this car
+     */
+    public function parents()
+    {
+        return $this->belongsToMany(
+            Entity::class,
+            'entity_relationships',
+            'child_entity_id',
+            'parent_entity_id'
+        )->withPivot('relationship_type', 'metadata')->withTimestamps();
+    }
+
+    /**
+     * Get all child entities (entities that this entity provides/covers/finances)
+     * Example: Cars covered by this insurance, Accounts financed by this bank
+     */
+    public function childEntities()
+    {
+        return $this->belongsToMany(
+            Entity::class,
+            'entity_relationships',
+            'parent_entity_id',
+            'child_entity_id'
+        )->withPivot('relationship_type', 'metadata')->withTimestamps();
     }
 
     /**

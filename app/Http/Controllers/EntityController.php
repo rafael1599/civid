@@ -109,4 +109,35 @@ class EntityController extends Controller
             'health' => $health,
         ]);
     }
+
+    public function update(Request $request, Entity $entity)
+    {
+        // Check authorization (implicit via route model binding + auth middleware, but explicitly checking ownership is good practice)
+        if ($request->user()->id !== $entity->user_id) {
+            abort(403);
+        }
+
+        $validated = $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'category' => 'sometimes|string|in:ASSET,LIABILITY,INCOME,EXPENSE,PROJECT,GOAL,SERVICE,HEALTH,FINANCE,DOCUMENT,LOCATION',
+            'status' => 'sometimes|string|in:ACTIVE,ARCHIVED,COMPLETED',
+            'metadata' => 'sometimes|array',
+        ]);
+
+        $entity->update($validated);
+
+        return redirect()->back()->with('success', 'Entidad actualizada correctamente.');
+    }
+
+    public function destroy(Request $request, Entity $entity)
+    {
+        // Check authorization
+        if ($request->user()->id !== $entity->user_id) {
+            abort(403);
+        }
+
+        $entity->delete();
+
+        return redirect()->route('dashboard')->with('success', 'Entidad eliminada correctamente.');
+    }
 }

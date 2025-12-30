@@ -13,7 +13,7 @@ class IngestExecutionController extends Controller
     {
         $validated = $request->validate([
             'actions' => 'required|array',
-            'actions.*.tool' => 'required|string|in:record_payment,calibrate_odometer,create_entity',
+            'actions.*.tool' => 'required|string|in:upsert_entity,link_entities,record_event,set_recurrence',
             'actions.*.params' => 'required|array',
         ]);
 
@@ -21,6 +21,8 @@ class IngestExecutionController extends Controller
             return DB::transaction(function () use ($validated, $request) {
                 $user = $request->user();
                 $results = [];
+                $createdEntities = [];
+                $createdEvents = [];
 
                 // Process each action in the array
                 foreach ($validated['actions'] as $action) {
@@ -28,9 +30,10 @@ class IngestExecutionController extends Controller
                     $params = $action['params'];
 
                     $result = match ($tool) {
-                        'record_payment' => $this->recordPayment($user, $params),
-                        'calibrate_odometer' => $this->calibrateOdometer($user, $params),
-                        'create_entity' => $this->createEntity($user, $params),
+                        'upsert_entity' => $this->upsertEntity($user, $params, $createdEntities),
+                        'link_entities' => $this->linkEntities($user, $params, $createdEntities),
+                        'record_event' => $this->recordEvent($user, $params, $createdEntities, $createdEvents),
+                        'set_recurrence' => $this->setRecurrence($user, $params, $createdEvents),
                         default => ['success' => false, 'message' => "Unknown tool: {$tool}"]
                     };
 
@@ -38,10 +41,10 @@ class IngestExecutionController extends Controller
                 }
 
                 // If all succeeded, redirect with success
-                $allSucceeded = collect($results)->every(fn ($r) => $r['success']);
+                $allSucceeded = collect($results)->every(fn($r) => $r['success']);
                 if ($allSucceeded) {
                     $message = count($results) > 1
-                        ? count($results).' acciones procesadas con éxito'
+                        ? count($results) . ' acciones procesadas con éxito'
                         : $results[0]['message'];
 
                     return redirect()->back()->with('success', $message);
@@ -59,116 +62,246 @@ class IngestExecutionController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return redirect()->back()->with('error', 'Error interno al procesar las acciones: '.$e->getMessage());
+            return redirect()->back()->with('error', 'Error interno al procesar las acciones: ' . $e->getMessage());
         }
     }
 
-    protected function recordPayment($user, array $params): array
+    /**
+     * Resolve entity ID from various formats:
+     * - UUID: return as-is
+     * - "find-by-name:EntityName": find by name
+     * - "new:EntityName": find recently created entity by name
+     * - "find-first-vehicle": find first ASSET entity
+     */
+    protected function resolveEntityId($user, string $identifier, array $createdEntities = []): ?string
     {
-        // Validate required params
-        if (! isset($params['entity_id'], $params['amount'], $params['date'])) {
-            return ['success' => false, 'message' => 'record_payment requiere: entity_id, amount, date'];
+        // Direct UUID
+        if (Str::isUuid($identifier)) {
+            return $identifier;
         }
 
-        // Find entity
-        $entity = null;
-        if (Str::isUuid($params['entity_id'])) {
-            $entity = $user->entities()->find($params['entity_id']);
+        // find-by-name:EntityName
+        if (str_starts_with($identifier, 'find-by-name:')) {
+            $name = substr($identifier, 13);
+            $entity = $user->entities()
+                ->where('name', 'LIKE', "%{$name}%")
+                ->where('status', 'ACTIVE')
+                ->first();
+
+            return $entity?->id;
         }
 
-        // Create payment event
+        // new:EntityName (from same batch)
+        if (str_starts_with($identifier, 'new:')) {
+            $name = substr($identifier, 4);
+
+            return $createdEntities[$name] ?? null;
+        }
+
+        // find-first-vehicle
+        if ($identifier === 'find-first-vehicle') {
+            $entity = $user->entities()
+                ->where('category', 'ASSET')
+                ->where('status', 'ACTIVE')
+                ->first();
+
+            return $entity?->id;
+        }
+
+        return null;
+    }
+
+    protected function upsertEntity($user, array $params, array &$createdEntities): array
+    {
+        if (!isset($params['category'], $params['name'])) {
+            return ['success' => false, 'message' => 'upsert_entity requires: category, name'];
+        }
+
+        // Handle special names
+        if ($params['name'] === 'find-first-vehicle') {
+            $entity = $user->entities()
+                ->where('category', 'ASSET')
+                ->where('status', 'ACTIVE')
+                ->first();
+
+            if (!$entity) {
+                return ['success' => false, 'message' => 'No vehicle found'];
+            }
+
+            // Update metadata
+            if (isset($params['metadata'])) {
+                $metadata = array_merge($entity->metadata ?? [], $params['metadata']);
+                $entity->update(['metadata' => $metadata]);
+            }
+
+            return ['success' => true, 'message' => "Entidad '{$entity->name}' actualizada", 'entity_id' => $entity->id];
+        }
+
+        // Find existing by name and category
+        $entity = $user->entities()
+            ->where('name', $params['name'])
+            ->where('category', strtoupper($params['category']))
+            ->first();
+
+        if ($entity) {
+            // Update existing
+            $metadata = array_merge($entity->metadata ?? [], $params['metadata'] ?? []);
+            $entity->update(['metadata' => $metadata]);
+            $message = "Entidad '{$entity->name}' actualizada";
+        } else {
+            // Create new
+            $entity = $user->entities()->create([
+                'name' => $params['name'],
+                'category' => strtoupper($params['category']),
+                'status' => 'ACTIVE',
+                'metadata' => $params['metadata'] ?? [],
+            ]);
+            $message = "Entidad '{$entity->name}' creada";
+
+            // Create initial balance event if provided
+            if (isset($params['balance']) && $params['balance'] != 0) {
+                $user->lifeEvents()->create([
+                    'entity_id' => $entity->id,
+                    'title' => 'Balance Inicial - ' . $entity->name,
+                    'amount' => $params['balance'],
+                    'occurred_at' => now()->toDateString(),
+                    'type' => $params['balance'] >= 0 ? 'INCOME' : 'EXPENSE',
+                    'status' => 'COMPLETED',
+                    'metadata' => ['source' => 'autonomous_ingestion', 'is_initial_balance' => true],
+                ]);
+            }
+        }
+
+        // Track creation for reference in same batch
+        $createdEntities[$params['name']] = $entity->id;
+
+        return ['success' => true, 'message' => $message, 'entity_id' => $entity->id];
+    }
+
+    protected function linkEntities($user, array $params, array $createdEntities): array
+    {
+        if (!isset($params['subject_id'], $params['relation'], $params['object_id'])) {
+            return ['success' => false, 'message' => 'link_entities requires: subject_id, relation, object_id'];
+        }
+
+        // Resolve IDs (will be enhanced with createdEntities tracking)
+        $subjectId = $this->resolveEntityId($user, $params['subject_id'], $createdEntities);
+        $objectId = $this->resolveEntityId($user, $params['object_id'], $createdEntities);
+
+        if (!$subjectId || !$objectId) {
+            return ['success' => false, 'message' => 'Could not resolve entity IDs'];
+        }
+
+        $subject = $user->entities()->find($subjectId);
+        $object = $user->entities()->find($objectId);
+
+        if (!$subject || !$object) {
+            return ['success' => false, 'message' => 'Both entities must exist'];
+        }
+
+        // Create relationship using entity_relationships pivot table
+        // Check if relationship already exists
+        $existing = \App\Models\EntityRelationship::where('parent_entity_id', $subjectId)
+            ->where('child_entity_id', $objectId)
+            ->where('relationship_type', $params['relation'])
+            ->first();
+
+        if ($existing) {
+            return [
+                'success' => true,
+                'message' => "Relación ya existe: {$subject->name} {$params['relation']} {$object->name}",
+            ];
+        }
+
+        // Create new relationship
+        \App\Models\EntityRelationship::create([
+            'parent_entity_id' => $subjectId,
+            'child_entity_id' => $objectId,
+            'relationship_type' => $params['relation'],
+            'metadata' => $params['metadata'] ?? [],
+        ]);
+
+        return [
+            'success' => true,
+            'message' => "{$subject->name} {$params['relation']} {$object->name}",
+        ];
+    }
+
+    protected function recordEvent($user, array $params, array $createdEntities, array &$createdEvents): array
+    {
+        if (!isset($params['entity_id'], $params['type'], $params['amount'], $params['date'])) {
+            return ['success' => false, 'message' => 'record_event requires: entity_id, type, amount, date'];
+        }
+
+        // Resolve entity ID
+        $entityId = $this->resolveEntityId($user, $params['entity_id'], $createdEntities);
+        $entity = $entityId ? $user->entities()->find($entityId) : null;
+
+        // Create event
         $event = $user->lifeEvents()->create([
             'entity_id' => $entity?->id,
-            'title' => 'Pago'.($entity ? ' - '.$entity->name : ''),
+            'title' => $params['note'] ?? ucfirst(strtolower($params['type'])) . ($entity ? ' - ' . $entity->name : ''),
             'amount' => $params['amount'],
             'occurred_at' => $params['date'],
-            'type' => $params['amount'] >= 0 ? 'INCOME' : 'EXPENSE',
+            'type' => $params['type'],
             'status' => 'COMPLETED',
             'metadata' => [
                 'source' => 'autonomous_ingestion',
-                'tool' => 'record_payment',
-                'was_auto_mapped' => ! is_null($entity),
+                'tool' => 'record_event',
             ],
         ]);
 
-        return ['success' => true, 'message' => 'Pago registrado con éxito'];
+        // Store event if temp_id provided
+        if (!empty($params['temp_id'])) {
+            $createdEvents[$params['temp_id']] = $event;
+        }
+
+        return ['success' => true, 'message' => 'Evento registrado con éxito'];
     }
 
-    protected function calibrateOdometer($user, array $params): array
+    protected function setRecurrence($user, array $params, array $createdEvents): array
     {
-        // Validate required params
-        if (! isset($params['entity_id'], $params['reading'])) {
-            return ['success' => false, 'message' => 'calibrate_odometer requiere: entity_id, reading'];
+        if (!isset($params['event_id'], $params['frequency'])) {
+            return ['success' => false, 'message' => 'set_recurrence required event_id and frequency'];
         }
 
-        // Find entity
-        $entity = null;
-        if (Str::isUuid($params['entity_id'])) {
-            $entity = $user->entities()->find($params['entity_id']);
+        // Resolve event: either from DB (UUID) or temp_id
+        $event = null;
+        if (isset($createdEvents[$params['event_id']])) {
+            $event = $createdEvents[$params['event_id']];
+        } elseif (Str::isUuid($params['event_id'])) {
+            $event = $user->lifeEvents()->find($params['event_id']);
         }
 
-        if (! $entity || $entity->category !== 'ASSET') {
-            return ['success' => false, 'message' => 'Entity must be an ASSET to calibrate odometer'];
+        if (!$event) {
+            return ['success' => false, 'message' => "Event not found for recurrence: {$params['event_id']}"];
         }
 
-        // Update metadata
-        $metadata = $entity->metadata ?? [];
-        $metadata['last_manual_odometer'] = $params['reading'];
-        $metadata['last_manual_odometer_at'] = now()->toDateString();
-        $entity->update(['metadata' => $metadata]);
+        // Create future events
+        $intervalMap = ['monthly' => 'month', 'yearly' => 'year', 'weekly' => 'week'];
+        $unit = $intervalMap[$params['frequency']] ?? null;
 
-        // Create SERVICE event to record the calibration
-        $user->lifeEvents()->create([
-            'entity_id' => $entity->id,
-            'title' => 'Calibración de Odómetro - '.$entity->name,
-            'amount' => 0,
-            'occurred_at' => now()->toDateString(),
-            'type' => 'SERVICE',
-            'status' => 'COMPLETED',
-            'metadata' => [
-                'source' => 'autonomous_ingestion',
-                'tool' => 'calibrate_odometer',
-                'odometer_reading' => $params['reading'],
-            ],
-        ]);
-
-        return ['success' => true, 'message' => "Odómetro actualizado: {$params['reading']} km"];
-    }
-
-    protected function createEntity($user, array $params): array
-    {
-        // Validate required params
-        if (! isset($params['category'], $params['name'])) {
-            return ['success' => false, 'message' => 'create_entity requiere: category, name'];
+        if (!$unit) {
+            return ['success' => false, 'message' => 'Invalid frequency'];
         }
 
-        $entity = $user->entities()->create([
-            'name' => $params['name'],
-            'category' => strtoupper($params['category']),
-            'status' => 'ACTIVE',
-            'metadata' => [
-                'source' => 'autonomous_ingestion',
-                'tool' => 'create_entity',
-                'initial_balance' => $params['balance'] ?? null,
-            ],
-        ]);
+        $startDate = \Carbon\Carbon::parse($event->occurred_at);
+        $intervalCount = $params['interval'] ?? 1;
 
-        // If initial balance provided, create an INCOME event
-        if (isset($params['balance']) && $params['balance'] != 0) {
+        for ($i = 1; $i <= 12; $i++) {
+            $dueDate = $startDate->copy()->add($unit, $i * $intervalCount);
+
             $user->lifeEvents()->create([
-                'entity_id' => $entity->id,
-                'title' => 'Balance Inicial - '.$entity->name,
-                'amount' => $params['balance'],
-                'occurred_at' => now()->toDateString(),
-                'type' => $params['balance'] >= 0 ? 'INCOME' : 'EXPENSE',
-                'status' => 'COMPLETED',
-                'metadata' => [
-                    'source' => 'autonomous_ingestion',
-                    'is_initial_balance' => true,
-                ],
+                'entity_id' => $event->entity_id,
+                'title' => $event->title,
+                'amount' => $event->amount,
+                'occurred_at' => $dueDate->toDateString(),
+                'type' => $event->type,
+                'status' => 'SCHEDULED',
+                'metadata' => ['recurrence_source' => $event->id, 'frequency' => $params['frequency']],
             ]);
         }
 
-        return ['success' => true, 'message' => "Entidad '{$entity->name}' creada exitosamente"];
+        return ['success' => true, 'message' => 'Recurrencia configurada'];
     }
 }

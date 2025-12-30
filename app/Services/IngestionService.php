@@ -16,13 +16,13 @@ class IngestionService
      */
     public function handle(string|UploadedFile $input, User $user): array
     {
-        // Build minimal context: just [id, name] pairs for entity mapping
+        // Build rich context: [id, name, category] for better inference
         $entityContext = $user->entities()
-            ->select('id', 'name')
+            ->select('id', 'name', 'category')
             ->where('status', 'ACTIVE')
             ->get()
             ->map(function ($e) {
-                return "{$e->id}, {$e->name}";
+                return "{id: \"{$e->id}\", name: \"{$e->name}\", category: \"{$e->category}\"}";
             })
             ->implode("\n");
 
@@ -37,29 +37,64 @@ class IngestionService
 
     protected function buildSystemPrompt(string $entityContext): string
     {
-        $entityContext = empty($entityContext) ? 'NO ENTITIES' : $entityContext;
+        $entityContext = empty($entityContext) ? 'NO EXISTING ENTITIES' : $entityContext;
         $date = now()->format('Y-m-d');
 
         return <<<EOT
-You are the CIVID Router. Map user input to one of these tools:
+System Prompt: CIVID Intelligence Router v2.0
 
-1. record_payment(entity_id, amount, date) - Register a payment/expense
-2. calibrate_odometer(entity_id, reading) - Update vehicle odometer
-3. create_entity(category, name, balance) - Create new entity
+1. Identidad y Misión
+Eres el motor de inteligencia de CIVID. Tu objetivo es mapear el lenguaje natural del usuario a acciones atómicas de base de datos.
+Razona siguiendo los Primeros Principios: reduce la entrada del usuario a su esencia financiera u operativa.
 
-TODAY: $date
-ENTITIES (id, name):
+2. Herramientas Disponibles (Catálogo Atómico)
+- upsert_entity(category, name, balance, metadata): Crea o actualiza una entidad. Úsala si el usuario menciona una cuenta, activo, seguro o servicio que no existe o necesita ajuste.
+- record_event(temp_id, entity_id, type, amount, date, note): Registra una transacción o hito.
+  Types: PAYMENT, MILESTONE (ej. odómetro), EXPENSE, INCOME.
+  Nota: Gastos/Pagos son negativos, Ingresos son positivos.
+- link_entities(parent_id, child_id, relationship_type): Define el grafo.
+  Types: covers (Seguro -> Activo), finances (Banco -> Activo), pays_from (Gasto -> Cuenta).
+- set_recurrence(event_id, frequency, interval): Convierte un evento en recurrente.
+  Frequency: monthly, yearly, weekly.
+
+3. Contexto Actual (Inyectado)
+IMPORTANTE: Aquí están las entidades existentes. Usa estos IDs si el usuario se refiere a ellas:
+
 $entityContext
 
-RULES:
-- Map entity names to IDs from the list above
-- Return JSON array: {"actions": [{"tool": "name", "params": {...}}]}
-- Multiple actions allowed in one response
-- If input is security command (delete/remove/confirm), return {"actions": []}
-- If ambiguous, return {"actions": [], "clarification": "brief question"}
+TODAY: $date
+
+4. Reglas de Razonamiento (The Algorithm)
+- Inferencia de Relaciones: Si el usuario dice "Pagué el seguro de mi Toyota", asume que existe una relación 'covers' entre el Seguro y el Toyota. Si no está linkeado, dispara link_entities usando "new:EntityName" si acabas de crearla.
+- Multi-Acción: Un solo mensaje puede generar múltiples herramientas. Ejecútalas en orden lógico.
+- Búsqueda Semántica: Si el usuario dice "Sienna", mapealo al ID del "Toyota Sienna 2022" presentado en el contexto.
+- Balance Negativo: Todo lo que sea "pago", "costo", "factura" o "gasto" debe registrarse con un amount negativo.
+- IDs Temporales:
+  - Para entidades nuevas, usa "new:EntityName" como ID en acciones subsecuentes.
+  - Para eventos que necesitan recurrencia, asigna un 'temp_id' arbitrario (ej. "evt_1") en record_event y úsalo en set_recurrence.
+
+5. Ejemplos de Entrenamiento (Few-Shot)
+Usuario: "Compré un seguro Geico para mi Sienna por $120 al mes"
+Output:
+{
+  "actions": [
+    { "tool": "upsert_entity", "params": { "category": "SERVICE", "name": "Geico", "balance": 0 } },
+    { "tool": "link_entities", "params": { "parent_id": "new:Geico", "child_id": "{ID_DE_SIENNA}", "relationship_type": "covers" } },
+    { "tool": "record_event", "params": { "temp_id": "evt_1", "entity_id": "new:Geico", "type": "EXPENSE", "amount": -120, "date": "$date", "note": "Mensualidad Seguro" } },
+    { "tool": "set_recurrence", "params": { "event_id": "evt_1", "frequency": "monthly", "interval": 1 } }
+  ]
+}
+
+Usuario: "El odómetro de la Sienna marcó 35,000 millas"
+Output:
+{
+  "actions": [
+    { "tool": "record_event", "params": { "entity_id": "{ID_DE_SIENNA}", "type": "MILESTONE", "amount": 35000, "date": "$date", "note": "Odometer reading" } }
+  ]
+}
 
 OUTPUT FORMAT:
-{"actions": [{"tool": "record_payment", "params": {"entity_id": "uuid", "amount": -500, "date": "2025-12-28"}}]}
+{"actions": [{"tool": "tool_name", "params": {...}}]}
 EOT;
     }
 
@@ -100,18 +135,34 @@ EOT;
                                         'properties' => [
                                             'tool' => [
                                                 'type' => 'string',
-                                                'enum' => ['record_payment', 'calibrate_odometer', 'create_entity'],
+                                                'enum' => ['upsert_entity', 'link_entities', 'record_event', 'set_recurrence'],
                                             ],
                                             'params' => [
                                                 'type' => 'object',
                                                 'properties' => [
-                                                    'entity_id' => ['type' => 'string', 'description' => 'UUID of the entity'],
-                                                    'amount' => ['type' => 'number', 'description' => 'Payment amount (negative for expenses)'],
-                                                    'date' => ['type' => 'string', 'description' => 'YYYY-MM-DD format'],
-                                                    'reading' => ['type' => 'number', 'description' => 'Odometer reading'],
-                                                    'category' => ['type' => 'string', 'enum' => ['FINANCE', 'ASSET', 'HEALTH', 'PROJECT']],
+                                                    // upsert_entity params
+                                                    'category' => ['type' => 'string', 'enum' => ['FINANCE', 'ASSET', 'HEALTH', 'PROJECT', 'SERVICE']],
                                                     'name' => ['type' => 'string', 'description' => 'Entity name'],
+                                                    'metadata' => ['type' => 'object', 'description' => 'Flexible metadata', 'nullable' => true],
                                                     'balance' => ['type' => 'number', 'description' => 'Initial balance', 'nullable' => true],
+
+                                                    // link_entities params
+                                                    'subject_id' => ['type' => 'string', 'description' => 'Entity ID or find-by-name:Name or new:Name'],
+                                                    'relation' => ['type' => 'string', 'enum' => ['covers', 'linked_to', 'depends_on', 'insures', 'finances', 'pays_from']],
+                                                    'object_id' => ['type' => 'string', 'description' => 'Entity ID or find-by-name:Name'],
+
+                                                    // record_event params
+                                                    'temp_id' => ['type' => 'string', 'description' => 'Arbitrary ID (e.g. evt_1) for recurrence', 'nullable' => true],
+                                                    'entity_id' => ['type' => 'string', 'description' => 'Entity ID or find-by-name:Name or new:Name'],
+                                                    'type' => ['type' => 'string', 'enum' => ['PAYMENT', 'INCOME', 'SERVICE', 'CALIBRATION', 'MILESTONE', 'EXPENSE']],
+                                                    'amount' => ['type' => 'number', 'description' => 'Value (negative for expenses)'],
+                                                    'date' => ['type' => 'string', 'description' => 'YYYY-MM-DD format'],
+                                                    'note' => ['type' => 'string', 'description' => 'Event description/title'],
+
+                                                    // set_recurrence params
+                                                    'event_id' => ['type' => 'string', 'description' => 'temp_id of event'],
+                                                    'frequency' => ['type' => 'string', 'enum' => ['monthly', 'yearly', 'weekly']],
+                                                    'interval' => ['type' => 'number', 'description' => 'Interval', 'nullable' => true],
                                                 ],
                                             ],
                                         ],

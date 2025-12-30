@@ -28,7 +28,7 @@ class DashboardController extends Controller
 
         $upcoming_bills = $user->lifeEvents()
             ->where('status', 'SCHEDULED')
-            ->where('occurred_at', '>=', $now->toDateString())
+            ->whereBetween('occurred_at', [$now->toDateString(), $thirtyDaysFromNow->toDateString()])
             ->with('entity:id,name')
             ->orderBy('occurred_at', 'asc')
             ->take(5)
@@ -74,12 +74,6 @@ class DashboardController extends Controller
             ->take(10)
             ->get();
 
-        $upcoming = $user->lifeEvents()
-            ->where('occurred_at', '>', $now->toDateString())
-            ->with(['entity:id,name,category'])
-            ->orderBy('occurred_at', 'asc')
-            ->take(10)
-            ->get();
 
         // Get actual Asset entities for the Graph View
         $assets = $user->entities()
@@ -96,7 +90,6 @@ class DashboardController extends Controller
         return Inertia::render('Dashboard', [
             'total_balance' => $total_balance,
             'history' => $history,
-            'upcoming' => $upcoming,
             'active_entities' => $active_entities,
             'assets' => $assets,
             'forecast' => [

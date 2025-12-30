@@ -3,7 +3,7 @@ import { Head, router } from '@inertiajs/react';
 import AssetCard from '@/Components/AssetCard';
 import { useState } from 'react';
 
-export default function Dashboard({ auth, total_balance, history, upcoming, assets, forecast }) {
+export default function Dashboard({ auth, total_balance, history, assets, forecast }) {
 
     // --- Omnibox Logic ---
     const Omnibox = () => {
@@ -353,8 +353,9 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
                                     </div>
                                 ))}
                                 {forecast.upcoming_bills.length === 0 && (
-                                    <div className="col-span-full py-4 text-center text-[10px] font-black text-gray-300 uppercase tracking-widest">
-                                        Sin pagos pendientes
+                                    <div className="col-span-full py-6 text-center">
+                                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-1">✨ Todo bajo control</p>
+                                        <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">No tienes pagos pendientes para los próximos 30 días.</p>
                                     </div>
                                 )}
                             </div>
@@ -386,17 +387,16 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
                         </div>
                     </div>
 
-                    {/* Split Activity View */}
-                    <div className="mx-4 md:mx-0 grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        {/* 1. History Card */}
-                        <div className="bg-white overflow-hidden shadow-sm rounded-[2rem] border border-gray-100 p-8 flex flex-col h-full">
+                    {/* History View */}
+                    <div className="mx-4 md:mx-0">
+                        <div className="bg-white overflow-hidden shadow-sm rounded-[2rem] border border-gray-100 p-8">
                             <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-8 flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                 Lo que ha pasado
                             </h3>
 
                             {history.length > 0 ? (
-                                <div className="space-y-8 relative before:absolute before:inset-0 before:left-4 before:w-0.5 before:bg-gray-50/50 flex-1">
+                                <div className="space-y-8 relative before:absolute before:inset-0 before:left-4 before:w-0.5 before:bg-gray-50/50">
                                     {history.map((event) => (
                                         <EventItem key={event.id} event={event} />
                                     ))}
@@ -404,26 +404,6 @@ export default function Dashboard({ auth, total_balance, history, upcoming, asse
                             ) : (
                                 <div className="text-center py-12 text-gray-400 font-bold text-sm bg-gray-50 rounded-2xl border border-dashed border-gray-100">
                                     Sin historial reciente.
-                                </div>
-                            )}
-                        </div>
-
-                        {/* 2. Upcoming Card */}
-                        <div className="bg-white overflow-hidden shadow-sm rounded-[2rem] border border-gray-100 p-8 flex flex-col h-full">
-                            <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-8 flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
-                                Lo que viene
-                            </h3>
-
-                            {upcoming.length > 0 ? (
-                                <div className="space-y-8 relative before:absolute before:inset-0 before:left-4 before:w-0.5 before:bg-gray-50/50 flex-1">
-                                    {upcoming.map((event) => (
-                                        <EventItem key={event.id} event={event} />
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="text-center py-12 text-gray-400 font-bold text-sm bg-gray-50 rounded-2xl border border-dashed border-gray-100">
-                                    No hay eventos futuros programados.
                                 </div>
                             )}
                         </div>

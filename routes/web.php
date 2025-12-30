@@ -45,6 +45,10 @@ Route::middleware('auth')->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
     Route::post('/entities', [\App\Http\Controllers\EntityController::class, 'store'])->name('entities.store');
+    Route::patch('/entities/{entity}', [\App\Http\Controllers\EntityController::class, 'update'])->name('entities.update');
+    Route::delete('/entities/{entity}', [\App\Http\Controllers\EntityController::class, 'destroy'])->name('entities.destroy');
+    Route::resource('life-events', \App\Http\Controllers\LifeEventController::class)->only(['store', 'update', 'destroy']);
+
     Route::post('/events/{event}/resolve', [EventActionController::class, 'markAsPaid'])->name('events.mark-as-paid'); // Renamed to match Show.jsx
     Route::post('/events/{event}/undo', [EventActionController::class, 'unmarkAsPaid'])->name('events.undo'); // Added this line
 
