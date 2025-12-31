@@ -9,6 +9,10 @@ export default function Dashboard({ auth, total_balance, history, entities, fore
     const Omnibox = () => {
         const [input, setInput] = useState('');
         const [isLoading, setIsLoading] = useState(false);
+        const [manualUploadMode, setManualUploadMode] = useState(false);
+        const [stagedFile, setStagedFile] = useState(null);
+        const [selectedEntityId, setSelectedEntityId] = useState('');
+        const [documentName, setDocumentName] = useState('');
         const [draft, setDraft] = useState(null);
         // NEW: System Feedback State (replaces alerts)
         const [sysFeedback, setSysFeedback] = useState(null);
@@ -80,6 +84,12 @@ export default function Dashboard({ auth, total_balance, history, entities, fore
             const file = e.target.files[0];
             if (!file) return;
 
+            if (manualUploadMode) {
+                setStagedFile(file);
+                setDocumentName(file.name);
+                return;
+            }
+
             setIsLoading(true);
             setDraft(null);
             setSysFeedback(null);
@@ -107,6 +117,34 @@ export default function Dashboard({ auth, total_balance, history, entities, fore
             }
         };
 
+        const handleManualUpload = async (e) => {
+            if (e) e.preventDefault();
+            if (!stagedFile || !selectedEntityId) return;
+
+            setIsLoading(true);
+            const formData = new FormData();
+            formData.append('file', stagedFile);
+            formData.append('entity_id', selectedEntityId);
+            formData.append('name', documentName);
+
+            try {
+                // router.post works too, but we use axios for consistency with ingest if we want silent response
+                await router.post(route('documents.store'), formData, {
+                    onSuccess: () => {
+                        setStagedFile(null);
+                        setManualUploadMode(false);
+                        setSelectedEntityId('');
+                        setDocumentName('');
+                    }
+                });
+            } catch (error) {
+                console.error("Manual upload failed", error);
+                setSysFeedback({ type: 'error', message: "Error al subir documento." });
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
         const triggerFileSelect = () => {
             fileInputRef.current?.click();
         };
@@ -126,18 +164,30 @@ export default function Dashboard({ auth, total_balance, history, entities, fore
                             type="text"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
-                            placeholder="Cuéntame algo o sube un recibo..."
-                            className={`w-full pl-6 pr-28 py-4 rounded-3xl border-none shadow-2xl shadow-indigo-500/10 focus:ring-2 focus:ring-indigo-500/30 bg-white/90 backdrop-blur-2xl text-base font-medium text-gray-700 placeholder-gray-400 transition-all hover:bg-white ${sysFeedback?.type === 'error' ? 'ring-2 ring-rose-500/30' : ''}`}
-                            disabled={isLoading}
+                            placeholder={manualUploadMode ? "Selecciona un archivo para guardar..." : "Cuéntame algo o sube un recibo..."}
+                            className={`w-full pl-6 pr-44 py-4 rounded-3xl border-none shadow-2xl shadow-indigo-500/10 focus:ring-2 focus:ring-indigo-500/30 bg-white/90 backdrop-blur-2xl text-base font-medium text-gray-700 placeholder-gray-400 transition-all hover:bg-white ${sysFeedback?.type === 'error' ? 'ring-2 ring-rose-500/30' : ''}`}
+                            disabled={isLoading || (manualUploadMode && stagedFile)}
                             autoFocus
                         />
 
                         <div className="absolute right-2 top-2 bottom-2 flex items-center gap-1 p-1 bg-gray-50/80 backdrop-blur-md rounded-2xl border border-gray-100/50">
                             <button
                                 type="button"
+                                onClick={() => {
+                                    setManualUploadMode(!manualUploadMode);
+                                    setStagedFile(null);
+                                }}
+                                className={`px-2 py-1 text-[10px] font-black uppercase tracking-tighter rounded-xl transition-all ${manualUploadMode ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'text-gray-400 hover:text-gray-600'}`}
+                                title="Modo Manual (Sin IA)"
+                            >
+                                {manualUploadMode ? 'Manual' : 'Directo'}
+                            </button>
+
+                            <button
+                                type="button"
                                 onClick={triggerFileSelect}
                                 disabled={isLoading}
-                                className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-white rounded-xl transition-all disabled:opacity-50 active:scale-95"
+                                className={`p-2 rounded-xl transition-all disabled:opacity-50 active:scale-95 ${stagedFile ? 'bg-green-100 text-green-600 border border-green-200' : 'text-gray-500 hover:text-indigo-600 hover:bg-white'}`}
                                 title="Adjuntar archivo"
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -147,7 +197,8 @@ export default function Dashboard({ auth, total_balance, history, entities, fore
 
                             <button
                                 type="submit"
-                                disabled={isLoading}
+                                disabled={isLoading || (manualUploadMode && !stagedFile) || (!manualUploadMode && !input.trim())}
+                                onClick={manualUploadMode ? handleManualUpload : undefined}
                                 className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all disabled:opacity-50 active:scale-95 flex items-center justify-center min-w-[40px]"
                             >
                                 {isLoading ? (
@@ -165,6 +216,67 @@ export default function Dashboard({ auth, total_balance, history, entities, fore
                     </div>
                 </form>
 
+                {/* MANUAL UPLOAD FORM OVERLAY */}
+                {manualUploadMode && stagedFile && (
+                    <div className="absolute top-full mt-4 left-0 right-0 bg-white rounded-2xl shadow-2xl border border-amber-100 p-6 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
+                        <div className="flex items-start justify-between mb-4">
+                            <div>
+                                <h4 className="text-[10px] font-black text-amber-600 uppercase tracking-widest flex items-center gap-2">
+                                    <span className="text-xl">📁</span>
+                                    Guardar Archivo Directo
+                                </h4>
+                                <p className="text-gray-500 text-xs mt-1">
+                                    Vincula este documento a una entidad sin análisis de IA.
+                                </p>
+                            </div>
+                            <button onClick={() => setStagedFile(null)} className="text-gray-300 hover:text-gray-500">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Vincular a:</label>
+                                    <select
+                                        value={selectedEntityId}
+                                        onChange={(e) => setSelectedEntityId(e.target.value)}
+                                        className="w-full text-xs bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-amber-500/20 py-3"
+                                        required
+                                    >
+                                        <option value="">Selecciona entidad...</option>
+                                        {entities.map(entity => (
+                                            <option key={entity.id} value={entity.id}>{entity.name} ({entity.category})</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Nombre Archivo:</label>
+                                    <input
+                                        type="text"
+                                        value={documentName}
+                                        onChange={(e) => setDocumentName(e.target.value)}
+                                        className="w-full text-xs bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-amber-500/20 py-3"
+                                        placeholder="Nombre del documento"
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleManualUpload}
+                                disabled={isLoading || !selectedEntityId}
+                                className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-lg shadow-amber-500/20 active:scale-95 transition-all text-xs uppercase tracking-widest flex items-center justify-center gap-2"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                                </svg>
+                                Guardar Sin Analizar
+                            </button>
+                        </div>
+                    </div>
+                )}
                 {/* FEEDBACK & CLARIFICATION UI (Inline) */}
                 {sysFeedback && !draft && (
                     <div className={`mt-3 p-4 rounded-2xl text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-300 border ${sysFeedback.type === 'error' ? 'bg-rose-50 text-rose-700 border-rose-100' : 'bg-amber-50 text-gray-800 border-amber-100'}`}>
@@ -267,11 +379,11 @@ export default function Dashboard({ auth, total_balance, history, entities, fore
         );
     };
 
+
     const EventItem = ({ event }) => (
         <div key={event.id} className="relative pl-12 flex items-center justify-between group">
             {/* Category Icon */}
-            <div className={`absolute left-0 w-8 h-8 rounded-xl flex items-center justify-center shadow-sm border border-gray-100 transition-all group-hover:scale-110 ${event.entity?.category === 'ASSET' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'
-                }`}>
+            <div className={`absolute left-0 w-8 h-8 rounded-xl flex items-center justify-center shadow-sm border border-gray-100 transition-all group-hover:scale-110 ${event.entity?.category === 'ASSET' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'}`}>
                 {event.entity?.category === 'ASSET' ? (
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                         <path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
