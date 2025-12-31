@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Entity;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -11,11 +12,19 @@ class IngestExecutionController extends Controller
 {
     public function __invoke(Request $request)
     {
-        $validated = $request->validate([
-            'actions' => 'required|array',
-            'actions.*.tool' => 'required|string|in:upsert_entity,link_entities,record_event,set_recurrence',
-            'actions.*.params' => 'required|array',
-        ]);
+        try {
+            $validated = $request->validate([
+                'actions' => 'required|array',
+                'actions.*.tool' => 'required|string|in:upsert_entity,link_entities,record_event,set_recurrence,record_financial_event',
+                'actions.*.params' => 'required|array',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            \Illuminate\Support\Facades\Log::warning('Execution validation failed', [
+                'errors' => $e->errors(),
+                'input' => $request->all()
+            ]);
+            throw $e;
+        }
 
         try {
             return DB::transaction(function () use ($validated, $request) {
@@ -32,7 +41,7 @@ class IngestExecutionController extends Controller
                     $result = match ($tool) {
                         'upsert_entity' => $this->upsertEntity($user, $params, $createdEntities),
                         'link_entities' => $this->linkEntities($user, $params, $createdEntities),
-                        'record_event' => $this->recordEvent($user, $params, $createdEntities, $createdEvents),
+                        'record_event', 'record_financial_event' => $this->recordEvent($user, $params, $createdEntities, $createdEvents),
                         'set_recurrence' => $this->setRecurrence($user, $params, $createdEvents),
                         default => ['success' => false, 'message' => "Unknown tool: {$tool}"]
                     };
@@ -66,23 +75,16 @@ class IngestExecutionController extends Controller
         }
     }
 
-    /**
-     * Resolve entity ID from various formats:
-     * - UUID: return as-is
-     * - "find-by-name:EntityName": find by name
-     * - "new:EntityName": find recently created entity by name
-     * - "find-first-vehicle": find first ASSET entity
-     */
-    protected function resolveEntityId($user, string $identifier, array $createdEntities = []): ?string
+    protected function resolveEntityId(User $user, string $entityIdentifier, array $createdEntities = []): ?string
     {
         // Direct UUID
-        if (Str::isUuid($identifier)) {
-            return $identifier;
+        if (Str::isUuid($entityIdentifier)) {
+            return $entityIdentifier;
         }
 
         // find-by-name:EntityName
-        if (str_starts_with($identifier, 'find-by-name:')) {
-            $name = substr($identifier, 13);
+        if (str_starts_with($entityIdentifier, 'find-by-name:')) {
+            $name = substr($entityIdentifier, 13);
             $entity = $user->entities()
                 ->where('name', 'LIKE', "%{$name}%")
                 ->where('status', 'ACTIVE')
@@ -92,14 +94,14 @@ class IngestExecutionController extends Controller
         }
 
         // new:EntityName (from same batch)
-        if (str_starts_with($identifier, 'new:')) {
-            $name = substr($identifier, 4);
+        if (str_starts_with($entityIdentifier, 'new:')) {
+            $name = substr($entityIdentifier, 4);
 
             return $createdEntities[$name] ?? null;
         }
 
         // find-first-vehicle
-        if ($identifier === 'find-first-vehicle') {
+        if ($entityIdentifier === 'find-first-vehicle') {
             $entity = $user->entities()
                 ->where('category', 'ASSET')
                 ->where('status', 'ACTIVE')
@@ -111,7 +113,7 @@ class IngestExecutionController extends Controller
         return null;
     }
 
-    protected function upsertEntity($user, array $params, array &$createdEntities): array
+    protected function upsertEntity(User $user, array $params, array &$createdEntities): array
     {
         if (!isset($params['category'], $params['name'])) {
             return ['success' => false, 'message' => 'upsert_entity requires: category, name'];
@@ -178,7 +180,7 @@ class IngestExecutionController extends Controller
         return ['success' => true, 'message' => $message, 'entity_id' => $entity->id];
     }
 
-    protected function linkEntities($user, array $params, array $createdEntities): array
+    protected function linkEntities(User $user, array $params, array $createdEntities): array
     {
         if (!isset($params['subject_id'], $params['relation'], $params['object_id'])) {
             return ['success' => false, 'message' => 'link_entities requires: subject_id, relation, object_id'];
@@ -227,10 +229,10 @@ class IngestExecutionController extends Controller
         ];
     }
 
-    protected function recordEvent($user, array $params, array $createdEntities, array &$createdEvents): array
+    protected function recordEvent(User $user, array $params, array $createdEntities, array &$createdEvents): array
     {
-        if (!isset($params['entity_id'], $params['type'], $params['amount'], $params['date'])) {
-            return ['success' => false, 'message' => 'record_event requires: entity_id, type, amount, date'];
+        if (!isset($params['entity_id'], $params['amount'], $params['date'])) {
+            return ['success' => false, 'message' => 'record_event requires: entity_id, amount, date'];
         }
 
         // Resolve entity ID
@@ -240,14 +242,14 @@ class IngestExecutionController extends Controller
         // Create event
         $event = $user->lifeEvents()->create([
             'entity_id' => $entity?->id,
-            'title' => $params['note'] ?? ucfirst(strtolower($params['type'])) . ($entity ? ' - ' . $entity->name : ''),
+            'title' => $params['description'] ?? $params['note'] ?? ucfirst(strtolower($params['type'] ?? 'Evento')) . ($entity ? ' - ' . $entity->name : ''),
             'amount' => $params['amount'],
             'occurred_at' => $params['date'],
-            'type' => $params['type'],
+            'type' => $params['type'] ?? ($params['amount'] < 0 ? 'EXPENSE' : 'INCOME'),
             'status' => 'COMPLETED',
             'metadata' => [
                 'source' => 'autonomous_ingestion',
-                'tool' => 'record_event',
+                'tool' => 'record_financial_event',
             ],
         ]);
 
@@ -256,10 +258,19 @@ class IngestExecutionController extends Controller
             $createdEvents[$params['temp_id']] = $event;
         }
 
+        // Handle internal recurrence if provided (record_financial_event unifies this)
+        if (!empty($params['recurrence'])) {
+            $this->setRecurrence($user, [
+                'event_id' => $event->id,
+                'frequency' => $params['recurrence']['frequency'],
+                'interval' => $params['recurrence']['interval'] ?? 1
+            ], $createdEvents);
+        }
+
         return ['success' => true, 'message' => 'Evento registrado con éxito'];
     }
 
-    protected function setRecurrence($user, array $params, array $createdEvents): array
+    protected function setRecurrence(User $user, array $params, array $createdEvents): array
     {
         if (!isset($params['event_id'], $params['frequency'])) {
             return ['success' => false, 'message' => 'set_recurrence required event_id and frequency'];

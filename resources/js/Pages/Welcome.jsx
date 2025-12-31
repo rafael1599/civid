@@ -96,7 +96,7 @@ export default function Welcome({ auth }) {
                                 </div>
                                 <h3 className="text-xl font-black text-white mb-4 tracking-tight uppercase">Omnibox Inteligente</h3>
                                 <p className="text-gray-400 font-medium leading-relaxed">
-                                    Olvida los formularios. Escribe "compré seguro para el coche" y CIVID se encargará de mapear el activo, el costo y la fecha automáticamente.
+                                    Olvida los formularios. Escribe o sube una foto de tu recibo y CIVID se encargará de mapear el activo, el costo y la fecha automáticamente.
                                 </p>
                             </div>
 

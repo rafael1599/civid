@@ -203,7 +203,7 @@ export default function Show({ auth, entity, alert_status, next_urgent_event, he
                                 <FinancialStats entity={entity} />
                             )}
 
-                            <DocumentVault documents={entity.documents} />
+                            <DocumentVault documents={entity.documents} entity_id={entity.id} />
 
                             <ActivityTimeline events={entity.life_events} />
 

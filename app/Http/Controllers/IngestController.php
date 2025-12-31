@@ -24,10 +24,14 @@ class IngestController extends Controller
             $draft = $ingestor->handle($input, $request->user());
 
             // Handle clarification requests
-            if (isset($draft['clarification']) && ! empty($draft['clarification'])) {
+            if (isset($draft['clarification']) && !empty($draft['clarification'])) {
+                $msg = is_array($draft['clarification'])
+                    ? ($draft['clarification']['question'] ?? json_encode($draft['clarification']))
+                    : (string) $draft['clarification'];
+
                 return response()->json([
                     'success' => false,
-                    'message' => $draft['clarification'],
+                    'message' => $msg,
                 ], 422);
             }
 
@@ -47,6 +51,7 @@ class IngestController extends Controller
             return response()->json([
                 'success' => true,
                 'draft' => $draft,
+                'analysis' => $draft['analysis'] ?? null,
                 'original_input' => $validated['prompt'] ?? 'File Upload',
             ]);
         } catch (\Exception $e) {
@@ -57,7 +62,7 @@ class IngestController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Error en el sistema de ingesta: '.$e->getMessage(),
+                'message' => 'Error en el sistema de ingesta: ' . $e->getMessage(),
             ], 500);
         }
     }

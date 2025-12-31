@@ -1,9 +1,9 @@
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, router } from '@inertiajs/react';
 import AssetCard from '@/Components/AssetCard';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 
-export default function Dashboard({ auth, total_balance, history, assets, forecast }) {
+export default function Dashboard({ auth, total_balance, history, entities, forecast }) {
 
     // --- Omnibox Logic ---
     const Omnibox = () => {
@@ -12,6 +12,7 @@ export default function Dashboard({ auth, total_balance, history, assets, foreca
         const [draft, setDraft] = useState(null);
         // NEW: System Feedback State (replaces alerts)
         const [sysFeedback, setSysFeedback] = useState(null);
+        const fileInputRef = useRef(null);
 
         const handleIngest = async (e) => {
             e.preventDefault();
@@ -35,8 +36,9 @@ export default function Dashboard({ auth, total_balance, history, assets, foreca
                     });
                 } else if (error.response?.status === 422) {
                     const data = error.response.data;
+                    console.warn("Ingestion validation feedback (422):", data);
                     setSysFeedback({
-                        type: 'info', // 'info' implies clarification/suggestion needed
+                        type: 'info',
                         message: data.message || "Por favor sé más específico.",
                         suggestions: data.suggestions || []
                     });
@@ -74,34 +76,93 @@ export default function Dashboard({ auth, total_balance, history, assets, foreca
             });
         };
 
+        const handleFileChange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            setIsLoading(true);
+            setDraft(null);
+            setSysFeedback(null);
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await window.axios.post(route('ingest'), formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+                if (response.data.success) {
+                    setDraft(response.data.draft);
+                }
+            } catch (error) {
+                console.error("File ingestion failed", error);
+                if (error.response) {
+                    console.error("Server Response:", error.response.data);
+                }
+                const msg = error.response?.data?.message || "No pude procesar el archivo. Intenta de nuevo.";
+                setSysFeedback({ type: 'error', message: msg });
+            } finally {
+                setIsLoading(false);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+            }
+        };
+
+        const triggerFileSelect = () => {
+            fileInputRef.current?.click();
+        };
+
         return (
             <div className="relative">
-                <form onSubmit={handleIngest} className="relative z-20">
-                    <input
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder="Cuéntame o arrastra un recibo..."
-                        className={`w-full pl-5 pr-12 py-3 rounded-2xl border-none shadow-lg shadow-indigo-500/10 focus:ring-2 focus:ring-indigo-500 bg-white/80 backdrop-blur-xl text-sm font-medium text-gray-700 placeholder-gray-400 transition-all hover:bg-white ${sysFeedback?.type === 'error' ? 'ring-2 ring-rose-500/50' : ''}`}
-                        disabled={isLoading}
-                        autoFocus
-                    />
-                    <button
-                        type="submit"
-                        disabled={isLoading}
-                        className="absolute right-2 top-2 p-1.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                    >
-                        {isLoading ? (
-                            <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                        ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
-                            </svg>
-                        )}
-                    </button>
+                <form onSubmit={handleIngest} className="relative z-20 flex items-center">
+                    <div className="relative flex-1 group">
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileChange}
+                            className="hidden"
+                            accept=".pdf,.jpg,.jpeg,.png"
+                        />
+                        <input
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder="Cuéntame algo o sube un recibo..."
+                            className={`w-full pl-6 pr-28 py-4 rounded-3xl border-none shadow-2xl shadow-indigo-500/10 focus:ring-2 focus:ring-indigo-500/30 bg-white/90 backdrop-blur-2xl text-base font-medium text-gray-700 placeholder-gray-400 transition-all hover:bg-white ${sysFeedback?.type === 'error' ? 'ring-2 ring-rose-500/30' : ''}`}
+                            disabled={isLoading}
+                            autoFocus
+                        />
+
+                        <div className="absolute right-2 top-2 bottom-2 flex items-center gap-1 p-1 bg-gray-50/80 backdrop-blur-md rounded-2xl border border-gray-100/50">
+                            <button
+                                type="button"
+                                onClick={triggerFileSelect}
+                                disabled={isLoading}
+                                className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-white rounded-xl transition-all disabled:opacity-50 active:scale-95"
+                                title="Adjuntar archivo"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M8 4a3 3 0 00-3 3v4a5 5 0 0010 0V7a1 1 0 112 0v4a7 7 0 11-14 0V7a5 5 0 0110 0v4a3 3 0 11-6 0V7a1 1 0 012 0v4a1 1 0 102 0V7a3 3 0 00-3-3z" clipRule="evenodd" />
+                                </svg>
+                            </button>
+
+                            <button
+                                type="submit"
+                                disabled={isLoading}
+                                className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all disabled:opacity-50 active:scale-95 flex items-center justify-center min-w-[40px]"
+                            >
+                                {isLoading ? (
+                                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                ) : (
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                                    </svg>
+                                )}
+                            </button>
+                        </div>
+                    </div>
                 </form>
 
                 {/* FEEDBACK & CLARIFICATION UI (Inline) */}
@@ -111,8 +172,12 @@ export default function Dashboard({ auth, total_balance, history, assets, foreca
                             <span className="text-xl shrink-0">
                                 {sysFeedback.type === 'error' ? '🛑' : '🤔'}
                             </span>
-                            <div className="flex-1">
-                                <p>{sysFeedback.message}</p>
+                            <div className="flex-1 min-w-0">
+                                <p className="leading-tight">
+                                    {typeof sysFeedback.message === 'object'
+                                        ? JSON.stringify(sysFeedback.message)
+                                        : sysFeedback.message}
+                                </p>
                                 {sysFeedback.suggestions && sysFeedback.suggestions.length > 0 && (
                                     <div className="mt-2 space-y-1">
                                         <p className="text-xs uppercase tracking-widest font-black opacity-50 mb-1">Prueba diciendo:</p>
@@ -170,7 +235,11 @@ export default function Dashboard({ auth, total_balance, history, assets, foreca
                                             {Object.entries(action.params).map(([key, value]) => (
                                                 <li key={key} className="flex justify-between text-xs">
                                                     <span className="text-gray-500 capitalize">{key.replace('_', ' ')}:</span>
-                                                    <span className="font-medium text-gray-900 truncate max-w-[150px]">{value}</span>
+                                                    <span className="font-medium text-gray-900 truncate max-w-[150px]">
+                                                        {typeof value === 'object' && value !== null
+                                                            ? (value.name || value.title || JSON.stringify(value))
+                                                            : String(value)}
+                                                    </span>
                                                 </li>
                                             ))}
                                         </ul>
@@ -367,21 +436,21 @@ export default function Dashboard({ auth, total_balance, history, assets, foreca
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-                                Mis Activos
+                                Mi Ecosistema
                             </h3>
                             <button className="text-[10px] font-black text-indigo-600 uppercase tracking-widest border-b-2 border-indigo-100">Ver Todos</button>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {assets && assets.length > 0 ? (
-                                assets.map(asset => (
+                            {entities && entities.length > 0 ? (
+                                entities.map(entity => (
                                     <AssetCard
-                                        key={asset.id}
-                                        asset={asset}
+                                        key={entity.id}
+                                        asset={entity}
                                     />
                                 ))
                             ) : (
                                 <div className="col-span-full py-12 bg-white rounded-3xl border border-dashed border-gray-200 text-center text-gray-400 font-bold text-sm">
-                                    Sin activos registrados
+                                    Sin entidades registradas
                                 </div>
                             )}
                         </div>

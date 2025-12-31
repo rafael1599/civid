@@ -75,10 +75,10 @@ class DashboardController extends Controller
             ->get();
 
 
-        // Get actual Asset entities for the Graph View
-        $assets = $user->entities()
-            ->where('category', 'ASSET')
-            ->with('children') // Load connected entities (Graph)
+        // Get ALL active entities for the Ecosistema View
+        $entities = $user->entities()
+            ->where('status', 'ACTIVE')
+            ->with(['childRelationships', 'parentRelationships']) // Load connected entities (Graph context)
             ->get();
 
         $active_entities = $user->entities()
@@ -91,7 +91,7 @@ class DashboardController extends Controller
             'total_balance' => $total_balance,
             'history' => $history,
             'active_entities' => $active_entities,
-            'assets' => $assets,
+            'entities' => $entities,
             'forecast' => [
                 'projected_amount' => $projected_expenses,
                 'upcoming_bills' => $upcoming_bills,
