@@ -87,7 +87,6 @@ export default function TransactionEditModal({ show, onClose, event, entities })
                             className="mt-1 block w-full rounded-2xl border-gray-100 bg-gray-50 text-sm font-medium focus:border-indigo-500 focus:ring-indigo-500"
                             value={data.entity_id}
                             onChange={(e) => setData('entity_id', e.target.value)}
-                            required
                         >
                             <option value="">Seleccionar...</option>
                             {entities.map((entity) => (
