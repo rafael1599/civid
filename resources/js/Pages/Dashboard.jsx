@@ -1,14 +1,17 @@
 import ZenLayout from '@/Layouts/ZenLayout';
 import { Head, usePage } from '@inertiajs/react';
 import TransactionEditModal from '@/Components/TransactionEditModal';
+import TransactionCreateModal from '@/Components/TransactionCreateModal';
 import QuickFixModal from '@/Components/QuickFixModal';
 import WalletManagementModal from '@/Components/WalletManagementModal';
 import { useState } from 'react';
+import { router } from '@inertiajs/react';
 
 export default function Dashboard({ total_balance, history, wallets, entities, active_entities, this_month, historical_flow, forecast }) {
     const { url } = usePage();
     const [selectedEvent, setSelectedEvent] = useState(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isQuickFixOpen, setIsQuickFixOpen] = useState(false);
     const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
@@ -23,19 +26,40 @@ export default function Dashboard({ total_balance, history, wallets, entities, a
         setIsQuickFixOpen(true);
     };
 
+    const handleCreateCommitment = () => {
+        setIsCreateModalOpen(true);
+    };
+
     const isEventIncomplete = (event) => {
         if (!event.amount || event.amount === 0) return true;
+        if (!event.occurred_at) return true;
+
+        // If it's a future commitment (SCHEDULED), we don't require a wallet yet
+        if (event.status === 'SCHEDULED') return false;
+
         // In the context of Dashboard history/ticker, entity_id should be a FINANCE entity (wallet)
         if (!event.entity_id) return true;
-        if (!event.occurred_at) return true;
 
         const title = event.title?.toLowerCase() || '';
         const entityName = event.entity?.name?.toLowerCase() || event.entity_name?.toLowerCase() || '';
+        const entityCategory = event.entity?.category || event.entity_category || null;
+
+        // If the transaction is assigned to something that isn't a wallet, it's incomplete
+        if (entityCategory !== 'FINANCE') return true;
 
         if (title.includes('desconocido') || title.includes('transacción omnibox')) return true;
         if (entityName.includes('billetera principal') && title.includes('transacción omnibox')) return true;
 
         return false;
+    };
+
+    const handleMarkAsPaid = (e, event) => {
+        e.stopPropagation();
+        if (confirm(`¿Confirmas que pagaste $${Math.abs(event.amount).toLocaleString()} hoy?`)) {
+            router.post(route('events.mark-as-paid', event.id), {}, {
+                preserveScroll: true
+            });
+        }
     };
 
     const formatCurrency = (amount) => {
@@ -47,6 +71,33 @@ export default function Dashboard({ total_balance, history, wallets, entities, a
         }).format(amount);
     };
 
+    const formatDate = (dateString) => {
+        if (!dateString) return '';
+
+        // Ensure we only use the YYYY-MM-DD part to avoid parsing errors with appended time
+        const baseDate = dateString.split('T')[0];
+        const date = new Date(baseDate + 'T12:00:00');
+
+        if (isNaN(date.getTime())) return dateString;
+
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+
+        const diffInDays = Math.floor(Math.abs(date - now) / (1000 * 60 * 60 * 24));
+
+        if (diffInDays <= 14) {
+            // "lunes 5" -> "Lunes 5"
+            const formatted = new Intl.DateTimeFormat('es-ES', {
+                weekday: 'long',
+                day: 'numeric'
+            }).format(date);
+            return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+        } else {
+            // "mm/dd"
+            return `${date.getMonth() + 1}/${date.getDate()}`;
+        }
+    };
+
     return (
         <ZenLayout>
             <Head title="Pulse" />
@@ -55,7 +106,14 @@ export default function Dashboard({ total_balance, history, wallets, entities, a
                 show={isEditModalOpen}
                 onClose={() => setIsEditModalOpen(false)}
                 event={selectedEvent}
-                entities={wallets || []}
+                entities={[...(wallets || []), ...(entities || [])]}
+            />
+
+            <TransactionCreateModal
+                show={isCreateModalOpen}
+                onClose={() => setIsCreateModalOpen(false)}
+                entities={[...(wallets || []), ...(entities || [])]}
+                defaultStatus="SCHEDULED"
             />
 
             <QuickFixModal
@@ -119,39 +177,69 @@ export default function Dashboard({ total_balance, history, wallets, entities, a
                 </section>
 
                 {/* 3. Upcoming Ticker (Horizontal) */}
-                {forecast.upcoming_bills.length > 0 && (
-                    <section>
-                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-4 px-1">Próximos Compromisos</h3>
-                        <div className="flex overflow-x-auto gap-4 pb-4 scrollbar-hide">
-                            {forecast.upcoming_bills.map((bill) => (
-                                <div
-                                    key={bill.id}
-                                    onClick={() => handleEditEvent(bill)}
-                                    className="relative min-w-[160px] bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between cursor-pointer hover:shadow-md transition-shadow group"
-                                >
-                                    {isEventIncomplete(bill) && (
-                                        <button
-                                            onClick={(e) => handleQuickFix(e, bill)}
-                                            className="absolute top-2 right-2 w-6 h-6 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center hover:bg-rose-100 transition-colors z-10"
-                                        >
-                                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                                <path fillRule="evenodd" d="M8.445 14.832A1 1 0 0010 14v-2.798l1.274 1.274a1 1 0 101.414-1.414L10 8.328l-1.274 1.274a1 1 0 001.414 1.414L10 9.732V12a1 1 0 102 0V8.328l-1.274 1.274z" clipRule="evenodd" />
-                                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                                            </svg>
-                                        </button>
-                                    )}
-                                    <div>
-                                        <p className="text-xs font-bold text-gray-900 truncate">{bill.entity_name}</p>
-                                        <p className="text-[10px] text-gray-400 mt-1">{bill.occurred_at}</p>
-                                    </div>
-                                    <p className={`text-sm font-black mt-3 ${bill.days_left <= 3 ? 'text-rose-600' : 'text-gray-900'}`}>
+                <section>
+                    <div className="flex items-center justify-between mb-4 px-1">
+                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Próximos Compromisos</h3>
+                        <button
+                            onClick={handleCreateCommitment}
+                            className="w-6 h-6 flex items-center justify-center bg-gray-50 text-gray-400 hover:text-indigo-600 hover:bg-gray-100 rounded-full transition-colors"
+                            title="Añadir compromiso"
+                        >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                            </svg>
+                        </button>
+                    </div>
+                    <div className="flex overflow-x-auto gap-4 pb-4 scrollbar-hide">
+                        {/* Add Commitment Card */}
+                        <div
+                            onClick={handleCreateCommitment}
+                            className="relative min-w-[160px] bg-gray-50/50 p-4 rounded-2xl border-2 border-dashed border-gray-100 flex flex-col items-center justify-center cursor-pointer hover:border-indigo-100 hover:bg-indigo-50/10 transition-all group"
+                        >
+                            <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-gray-300 group-hover:text-indigo-400 transition-colors shadow-sm mb-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                </svg>
+                            </div>
+                            <p className="text-[10px] font-black uppercase text-gray-400 group-hover:text-indigo-400 transition-colors">Nuevo</p>
+                        </div>
+
+                        {forecast.upcoming_bills.map((bill) => (
+                            <div
+                                key={bill.id}
+                                onClick={() => handleEditEvent(bill)}
+                                className="relative min-w-[160px] bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between cursor-pointer hover:shadow-md transition-shadow group"
+                            >
+                                {isEventIncomplete(bill) && (
+                                    <button
+                                        onClick={(e) => handleQuickFix(e, bill)}
+                                        className="absolute top-2 right-2 w-6 h-6 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center hover:bg-rose-100 transition-colors z-10"
+                                    >
+                                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M8.445 14.832A1 1 0 0010 14v-2.798l1.274 1.274a1 1 0 101.414-1.414L10 8.328l-1.274 1.274a1 1 0 001.414 1.414L10 9.732V12a1 1 0 102 0V8.328l-1.274 1.274z" clipRule="evenodd" />
+                                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                        </svg>
+                                    </button>
+                                )}
+                                <div>
+                                    <p className="text-xs font-bold text-gray-900 truncate">{bill.entity_name}</p>
+                                    <p className="text-[10px] text-gray-400 mt-1">{formatDate(bill.occurred_at)}</p>
+                                </div>
+                                <div className="flex items-center justify-between mt-3">
+                                    <p className={`text-sm font-black ${bill.days_left <= 3 ? 'text-rose-600' : 'text-gray-900'}`}>
                                         {formatCurrency(bill.amount)}
                                     </p>
+                                    <button
+                                        onClick={(e) => handleMarkAsPaid(e, bill)}
+                                        className="px-2 py-1 bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase tracking-tighter rounded-md hover:bg-emerald-100 transition-colors"
+                                    >
+                                        PAGAR
+                                    </button>
                                 </div>
-                            ))}
-                        </div>
-                    </section>
-                )}
+                            </div>
+                        ))}
+                    </div>
+                </section>
 
                 {/* 4. Clean Feed */}
                 <section>
@@ -169,8 +257,15 @@ export default function Dashboard({ total_balance, history, wallets, entities, a
                                         {event.type === 'INCOME' ? '↓' : '↑'}
                                     </div>
                                     <div>
-                                        <p className="text-sm font-bold text-gray-900">{event.entity?.name || event.title}</p>
-                                        <p className="text-[10px] text-gray-400 uppercase font-medium">{event.occurred_at}</p>
+                                        <p className="text-sm font-bold text-gray-900">{event.title}</p>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <p className="text-[10px] text-gray-400 uppercase font-medium">{formatDate(event.occurred_at)}</p>
+                                            {event.entity?.name && (
+                                                <span className="px-1.5 py-0.5 bg-gray-50 text-gray-400 text-[8px] font-bold uppercase rounded border border-gray-100/50">
+                                                    {event.entity.name}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-3">

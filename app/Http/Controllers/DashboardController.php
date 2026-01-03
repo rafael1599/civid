@@ -29,7 +29,7 @@ class DashboardController extends Controller
         $upcoming_bills = $user->lifeEvents()
             ->where('status', 'SCHEDULED')
             ->whereBetween('occurred_at', [$now->toDateString(), $thirtyDaysFromNow->toDateString()])
-            ->with('entity:id,name')
+            ->with('entity:id,name,category')
             ->orderBy('occurred_at', 'asc')
             ->take(5)
             ->get()
@@ -41,6 +41,8 @@ class DashboardController extends Controller
                     'occurred_at' => $event->occurred_at->toDateString(),
                     'entity_name' => $event->entity->name ?? 'Sistema',
                     'entity_id' => $event->entity_id,
+                    'entity_category' => $event->entity->category ?? null,
+                    'status' => $event->status,
                     'type' => $event->type,
                     'days_left' => (int) $now->diffInDays($event->occurred_at, false),
                 ];

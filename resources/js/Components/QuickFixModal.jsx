@@ -28,9 +28,15 @@ export default function QuickFixModal({ show, onClose, event, entities }) {
 
     const isMissing = (field) => {
         if (field === 'amount') return !event?.amount || event?.amount === 0;
-        if (field === 'entity_id') return !event?.entity_id;
+        if (field === 'entity_id') {
+            // Future commitments don't require a wallet yet
+            if (event?.status === 'SCHEDULED') return false;
+
+            const entityCategory = event?.entity?.category || event?.entity_category || null;
+            return !event?.entity_id || entityCategory !== 'FINANCE';
+        }
         if (field === 'occurred_at') return !event?.occurred_at;
-        if (field === 'title') return !event?.title || event?.title.includes('Desconocido');
+        if (field === 'title') return !event?.title || event?.title.toLowerCase().includes('desconocido') || event?.title.toLowerCase().includes('transacción omnibox');
         return false;
     };
 

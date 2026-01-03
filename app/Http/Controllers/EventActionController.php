@@ -17,48 +17,34 @@ class EventActionController extends Controller
         }
 
         DB::transaction(function () use ($event) {
-            // 2. Change current event status to PAID
+            // 2. Simplify: Update status to COMPLETED and set date to NOW
             $event->update([
-                'status' => 'PAID',
-                'description' => ($event->description ? $event->description . "\n" : "") . "Marcado como pagado manualmente el " . now()->format('Y-m-d')
-            ]);
-
-            // 3. Create Mirror Event (PAYMENT) for cash flow record
-            LifeEvent::create([
-                'id' => (string) Str::uuid(),
-                'user_id' => $event->user_id,
-                'entity_id' => $event->entity_id,
-                'title' => 'Registro de Pago: ' . $event->title,
-                'type' => 'PAYMENT',
-                'amount' => abs($event->amount), // Positive cash flow/payment record
-                'occurred_at' => now(),
                 'status' => 'COMPLETED',
-                'description' => 'Pago realizado para liquidar evento: ' . $event->id
+                'occurred_at' => now(),
+                'description' => ($event->description ? $event->description . "\n" : "") . "Pagado el " . now()->format('Y-m-d') . " (Transacción regularizada)"
             ]);
 
-            // 4. Smart Recurrence Logic
+            // 3. Smart Recurrence Logic (Keep this)
             $entity = $event->entity;
             if ($entity) {
                 $metadata = $entity->metadata ?? [];
 
-                // Track remaining payments
                 if (isset($metadata['remaining_payments'])) {
                     $remaining = (int) $metadata['remaining_payments'];
 
                     if ($remaining > 0) {
-                        // Decrement counter
                         $remaining--;
                         $metadata['remaining_payments'] = $remaining;
                         $entity->metadata = $metadata;
-                        $entity->save(); // This persists the counter change
+                        $entity->save();
 
-                        // If still positive, generate next event
                         if ($remaining > 0) {
                             $nextEvent = $event->replicate();
                             $nextEvent->id = (string) \Illuminate\Support\Str::uuid();
-                            $nextEvent->occurred_at = \Carbon\Carbon::parse($event->occurred_at)->addMonth();
+                            // Next commitment stays in the future
+                            $nextEvent->occurred_at = \Carbon\Carbon::now()->addMonth();
                             $nextEvent->status = 'SCHEDULED';
-                            $nextEvent->description = 'Generado automáticamente tras liquidación de cuota anterior.';
+                            $nextEvent->description = 'Siguiente compromiso proyectado.';
                             $nextEvent->save();
                         }
                     }
