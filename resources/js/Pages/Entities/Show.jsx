@@ -7,10 +7,15 @@ import ActivityTimeline from '@/Components/Entities/ActivityTimeline';
 import DocumentVault from '@/Components/Entities/DocumentVault';
 import EcosystemList from '@/Components/Entities/EcosystemList';
 import FinancialStats from '@/Components/Entities/FinancialStats';
+import EventModal from '@/Components/Entities/EventModal';
 
 export default function Show({ auth, entity, alert_status, next_urgent_event, health }) {
     const isAsset = entity.category === 'ASSET';
     const [isEditing, setIsEditing] = useState(false);
+
+    // Event Management State
+    const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+    const [editingEvent, setEditingEvent] = useState(null);
 
     const { data, setData, patch, processing, errors, reset } = useForm({
         name: entity.name,
@@ -41,6 +46,25 @@ export default function Show({ auth, entity, alert_status, next_urgent_event, he
     const handleDelete = () => {
         if (confirm(`¿Estás seguro de que deseas eliminar "${entity.name}"? Esta acción no se puede deshacer.`)) {
             router.delete(route('entities.destroy', entity.id));
+        }
+    };
+
+    // Event Handlers
+    const handleCreateEvent = () => {
+        setEditingEvent(null);
+        setIsEventModalOpen(true);
+    };
+
+    const handleEditEvent = (event) => {
+        setEditingEvent(event);
+        setIsEventModalOpen(true);
+    };
+
+    const handleDeleteEvent = (eventId) => {
+        if (confirm('¿Eliminar este evento permanentemente?')) {
+            router.delete(route('life-events.destroy', eventId), {
+                preserveScroll: true
+            });
         }
     };
 
@@ -205,10 +229,17 @@ export default function Show({ auth, entity, alert_status, next_urgent_event, he
 
                             <DocumentVault documents={entity.documents} entity_id={entity.id} />
 
-                            <ActivityTimeline events={entity.life_events} />
+                            <ActivityTimeline
+                                events={entity.life_events}
+                                onEdit={handleEditEvent}
+                                onDelete={handleDeleteEvent}
+                            />
 
                             <div className="mt-4 flex justify-center">
-                                <button className="inline-flex items-center px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-[11px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-all active:scale-95 shadow-sm border border-indigo-100">
+                                <button
+                                    onClick={handleCreateEvent}
+                                    className="inline-flex items-center px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-[11px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-all active:scale-95 shadow-sm border border-indigo-100"
+                                >
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                                     </svg>
@@ -224,6 +255,13 @@ export default function Show({ auth, entity, alert_status, next_urgent_event, he
 
                 </div>
             </div>
+
+            <EventModal
+                show={isEventModalOpen}
+                onClose={() => setIsEventModalOpen(false)}
+                event={editingEvent}
+                entityId={entity.id}
+            />
         </AuthenticatedLayout>
     );
 }

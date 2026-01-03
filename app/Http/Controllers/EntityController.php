@@ -24,6 +24,11 @@ class EntityController extends Controller
         return redirect()->back()->with('success', 'Entidad creada correctamente.');
     }
 
+    public function index(Request $request)
+    {
+        return response()->json($request->user()->entities()->select('id', 'name', 'category')->get());
+    }
+
     public function show($id)
     {
         $entity = Entity::with(['children', 'documents'])->findOrFail($id);

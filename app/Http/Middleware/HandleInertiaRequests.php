@@ -38,6 +38,9 @@ class HandleInertiaRequests extends Middleware
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
             ],
+            'pendingCount' => $request->user()
+                ? \App\Models\PendingConfirmation::where('user_id', $request->user()->id)->where('status', 'pending')->count()
+                : 0,
         ];
     }
 }

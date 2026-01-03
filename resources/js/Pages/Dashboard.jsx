@@ -1,596 +1,200 @@
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, router } from '@inertiajs/react';
-import AssetCard from '@/Components/AssetCard';
-import { useState, useRef } from 'react';
+import ZenLayout from '@/Layouts/ZenLayout';
+import { Head, usePage } from '@inertiajs/react';
+import TransactionEditModal from '@/Components/TransactionEditModal';
+import QuickFixModal from '@/Components/QuickFixModal';
+import WalletManagementModal from '@/Components/WalletManagementModal';
+import { useState } from 'react';
 
-export default function Dashboard({ auth, total_balance, history, entities, forecast }) {
+export default function Dashboard({ total_balance, history, wallets, entities, active_entities, this_month, historical_flow, forecast }) {
+    const { url } = usePage();
+    const [selectedEvent, setSelectedEvent] = useState(null);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isQuickFixOpen, setIsQuickFixOpen] = useState(false);
+    const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
-    // --- Omnibox Logic ---
-    const Omnibox = () => {
-        const [input, setInput] = useState('');
-        const [isLoading, setIsLoading] = useState(false);
-        const [manualUploadMode, setManualUploadMode] = useState(false);
-        const [stagedFile, setStagedFile] = useState(null);
-        const [selectedEntityId, setSelectedEntityId] = useState('');
-        const [documentName, setDocumentName] = useState('');
-        const [draft, setDraft] = useState(null);
-        // NEW: System Feedback State (replaces alerts)
-        const [sysFeedback, setSysFeedback] = useState(null);
-        const fileInputRef = useRef(null);
-
-        const handleIngest = async (e) => {
-            e.preventDefault();
-            if (!input.trim()) return;
-
-            setIsLoading(true);
-            setDraft(null);
-            setSysFeedback(null); // Clear previous feedback
-
-            try {
-                const response = await window.axios.post(route('ingest'), { prompt: input });
-                if (response.data.success) {
-                    setDraft(response.data.draft);
-                }
-            } catch (error) {
-                console.error("Ingestion failed", error);
-                if (error.response?.status === 419) {
-                    setSysFeedback({
-                        type: 'error',
-                        message: "Tu sesión ha expirado. Por favor, refresca la página."
-                    });
-                } else if (error.response?.status === 422) {
-                    const data = error.response.data;
-                    console.warn("Ingestion validation feedback (422):", data);
-                    setSysFeedback({
-                        type: 'info',
-                        message: data.message || "Por favor sé más específico.",
-                        suggestions: data.suggestions || []
-                    });
-                } else {
-                    const msg = error.response?.data?.message || "No pude procesar eso. Intenta de nuevo.";
-                    setSysFeedback({ type: 'error', message: msg });
-                }
-            } finally {
-                setIsLoading(false);
-            }
-        };
-
-        const confirmDraft = () => {
-            setIsLoading(true);
-            // We verify draft has actions before sending
-            if (!draft || !draft.actions || draft.actions.length === 0) return;
-
-            router.post(route('ingest.execute'), { actions: draft.actions }, {
-                preserveState: true,
-                onSuccess: () => {
-                    setDraft(null);
-                    setInput('');
-                    setSysFeedback(null);
-                    setIsLoading(false);
-                },
-                onError: (errors) => {
-                    console.error("Execution failed", errors);
-                    setSysFeedback({
-                        type: 'error',
-                        message: "Error al guardar: " + Object.values(errors).join(", ")
-                    });
-                    setIsLoading(false);
-                },
-                onFinish: () => setIsLoading(false)
-            });
-        };
-
-        const handleFileChange = async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-
-            if (manualUploadMode) {
-                setStagedFile(file);
-                setDocumentName(file.name);
-                return;
-            }
-
-            setIsLoading(true);
-            setDraft(null);
-            setSysFeedback(null);
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                const response = await window.axios.post(route('ingest'), formData, {
-                    headers: { 'Content-Type': 'multipart/form-data' }
-                });
-                if (response.data.success) {
-                    setDraft(response.data.draft);
-                }
-            } catch (error) {
-                console.error("File ingestion failed", error);
-                if (error.response) {
-                    console.error("Server Response:", error.response.data);
-                }
-                const msg = error.response?.data?.message || "No pude procesar el archivo. Intenta de nuevo.";
-                setSysFeedback({ type: 'error', message: msg });
-            } finally {
-                setIsLoading(false);
-                if (fileInputRef.current) fileInputRef.current.value = '';
-            }
-        };
-
-        const handleManualUpload = async (e) => {
-            if (e) e.preventDefault();
-            if (!stagedFile || !selectedEntityId) return;
-
-            setIsLoading(true);
-            const formData = new FormData();
-            formData.append('file', stagedFile);
-            formData.append('entity_id', selectedEntityId);
-            formData.append('name', documentName);
-
-            try {
-                // router.post works too, but we use axios for consistency with ingest if we want silent response
-                await router.post(route('documents.store'), formData, {
-                    onSuccess: () => {
-                        setStagedFile(null);
-                        setManualUploadMode(false);
-                        setSelectedEntityId('');
-                        setDocumentName('');
-                    }
-                });
-            } catch (error) {
-                console.error("Manual upload failed", error);
-                setSysFeedback({ type: 'error', message: "Error al subir documento." });
-            } finally {
-                setIsLoading(false);
-            }
-        };
-
-        const triggerFileSelect = () => {
-            fileInputRef.current?.click();
-        };
-
-        return (
-            <div className="relative">
-                <form onSubmit={handleIngest} className="relative z-20 flex items-center">
-                    <div className="relative flex-1 group">
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleFileChange}
-                            className="hidden"
-                            accept=".pdf,.jpg,.jpeg,.png"
-                        />
-                        <input
-                            type="text"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            placeholder={manualUploadMode ? "Selecciona un archivo para guardar..." : "Cuéntame algo o sube un recibo..."}
-                            className={`w-full pl-6 pr-44 py-4 rounded-3xl border-none shadow-2xl shadow-indigo-500/10 focus:ring-2 focus:ring-indigo-500/30 bg-white/90 backdrop-blur-2xl text-base font-medium text-gray-700 placeholder-gray-400 transition-all hover:bg-white ${sysFeedback?.type === 'error' ? 'ring-2 ring-rose-500/30' : ''}`}
-                            disabled={isLoading || (manualUploadMode && stagedFile)}
-                            autoFocus
-                        />
-
-                        <div className="absolute right-2 top-2 bottom-2 flex items-center gap-1 p-1 bg-gray-50/80 backdrop-blur-md rounded-2xl border border-gray-100/50">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setManualUploadMode(!manualUploadMode);
-                                    setStagedFile(null);
-                                }}
-                                className={`px-2 py-1 text-[10px] font-black uppercase tracking-tighter rounded-xl transition-all ${manualUploadMode ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'text-gray-400 hover:text-gray-600'}`}
-                                title="Modo Manual (Sin IA)"
-                            >
-                                {manualUploadMode ? 'Manual' : 'Directo'}
-                            </button>
-
-                            <button
-                                type="button"
-                                onClick={triggerFileSelect}
-                                disabled={isLoading}
-                                className={`p-2 rounded-xl transition-all disabled:opacity-50 active:scale-95 ${stagedFile ? 'bg-green-100 text-green-600 border border-green-200' : 'text-gray-500 hover:text-indigo-600 hover:bg-white'}`}
-                                title="Adjuntar archivo"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M8 4a3 3 0 00-3 3v4a5 5 0 0010 0V7a1 1 0 112 0v4a7 7 0 11-14 0V7a5 5 0 0110 0v4a3 3 0 11-6 0V7a1 1 0 012 0v4a1 1 0 102 0V7a3 3 0 00-3-3z" clipRule="evenodd" />
-                                </svg>
-                            </button>
-
-                            <button
-                                type="submit"
-                                disabled={isLoading || (manualUploadMode && !stagedFile) || (!manualUploadMode && !input.trim())}
-                                onClick={manualUploadMode ? handleManualUpload : undefined}
-                                className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all disabled:opacity-50 active:scale-95 flex items-center justify-center min-w-[40px]"
-                            >
-                                {isLoading ? (
-                                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                    </svg>
-                                ) : (
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                        <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                                    </svg>
-                                )}
-                            </button>
-                        </div>
-                    </div>
-                </form>
-
-                {/* MANUAL UPLOAD FORM OVERLAY */}
-                {manualUploadMode && stagedFile && (
-                    <div className="absolute top-full mt-4 left-0 right-0 bg-white rounded-2xl shadow-2xl border border-amber-100 p-6 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
-                        <div className="flex items-start justify-between mb-4">
-                            <div>
-                                <h4 className="text-[10px] font-black text-amber-600 uppercase tracking-widest flex items-center gap-2">
-                                    <span className="text-xl">📁</span>
-                                    Guardar Archivo Directo
-                                </h4>
-                                <p className="text-gray-500 text-xs mt-1">
-                                    Vincula este documento a una entidad sin análisis de IA.
-                                </p>
-                            </div>
-                            <button onClick={() => setStagedFile(null)} className="text-gray-300 hover:text-gray-500">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                                </svg>
-                            </button>
-                        </div>
-
-                        <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Vincular a:</label>
-                                    <select
-                                        value={selectedEntityId}
-                                        onChange={(e) => setSelectedEntityId(e.target.value)}
-                                        className="w-full text-xs bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-amber-500/20 py-3"
-                                        required
-                                    >
-                                        <option value="">Selecciona entidad...</option>
-                                        {entities.map(entity => (
-                                            <option key={entity.id} value={entity.id}>{entity.name} ({entity.category})</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div className="space-y-1">
-                                    <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Nombre Archivo:</label>
-                                    <input
-                                        type="text"
-                                        value={documentName}
-                                        onChange={(e) => setDocumentName(e.target.value)}
-                                        className="w-full text-xs bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-amber-500/20 py-3"
-                                        placeholder="Nombre del documento"
-                                    />
-                                </div>
-                            </div>
-
-                            <button
-                                onClick={handleManualUpload}
-                                disabled={isLoading || !selectedEntityId}
-                                className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-lg shadow-amber-500/20 active:scale-95 transition-all text-xs uppercase tracking-widest flex items-center justify-center gap-2"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                                </svg>
-                                Guardar Sin Analizar
-                            </button>
-                        </div>
-                    </div>
-                )}
-                {/* FEEDBACK & CLARIFICATION UI (Inline) */}
-                {sysFeedback && !draft && (
-                    <div className={`mt-3 p-4 rounded-2xl text-sm font-medium animate-in fade-in slide-in-from-top-2 duration-300 border ${sysFeedback.type === 'error' ? 'bg-rose-50 text-rose-700 border-rose-100' : 'bg-amber-50 text-gray-800 border-amber-100'}`}>
-                        <div className="flex gap-3">
-                            <span className="text-xl shrink-0">
-                                {sysFeedback.type === 'error' ? '🛑' : '🤔'}
-                            </span>
-                            <div className="flex-1 min-w-0">
-                                <p className="leading-tight">
-                                    {typeof sysFeedback.message === 'object'
-                                        ? JSON.stringify(sysFeedback.message)
-                                        : sysFeedback.message}
-                                </p>
-                                {sysFeedback.suggestions && sysFeedback.suggestions.length > 0 && (
-                                    <div className="mt-2 space-y-1">
-                                        <p className="text-xs uppercase tracking-widest font-black opacity-50 mb-1">Prueba diciendo:</p>
-                                        {sysFeedback.suggestions.map((sug, i) => (
-                                            <button
-                                                key={i}
-                                                onClick={() => setInput(sug)}
-                                                className="block text-xs bg-white/50 hover:bg-white px-2 py-1 rounded-md transition-colors text-left w-full truncate"
-                                            >
-                                                "{sug}"
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                            <button onClick={() => setSysFeedback(null)} className="opacity-50 hover:opacity-100 self-start">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* DRAFT MODAL - Multi-Action Support */}
-                {draft && (
-                    <div className="absolute top-full mt-4 left-0 right-0 bg-white rounded-2xl shadow-2xl border border-indigo-100 p-6 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
-                        <div className="flex items-start justify-between mb-4">
-                            <div>
-                                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                                    <span className="text-xl">✨</span>
-                                    Plan de Acción
-                                </h4>
-                                <p className="text-indigo-600 font-bold text-xs mt-1">
-                                    {draft.actions?.length || 0} acciones propuestas
-                                </p>
-                            </div>
-                            <button onClick={() => setDraft(null)} className="text-gray-300 hover:text-gray-500">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                                </svg>
-                            </button>
-                        </div>
-
-                        {draft.actions && draft.actions.length > 0 ? (
-                            <div className="space-y-4">
-                                {draft.actions.map((action, index) => (
-                                    <div key={index} className="bg-gray-50 rounded-xl p-3 border border-gray-100 text-sm">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <span className="font-black text-indigo-600 uppercase text-[10px] tracking-widest">
-                                                {action.tool.replace('_', ' ')}
-                                            </span>
-                                        </div>
-                                        <ul className="space-y-1">
-                                            {Object.entries(action.params).map(([key, value]) => (
-                                                <li key={key} className="flex justify-between text-xs">
-                                                    <span className="text-gray-500 capitalize">{key.replace('_', ' ')}:</span>
-                                                    <span className="font-medium text-gray-900 truncate max-w-[150px]">
-                                                        {typeof value === 'object' && value !== null
-                                                            ? (value.name || value.title || JSON.stringify(value))
-                                                            : String(value)}
-                                                    </span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                ))}
-
-                                <button
-                                    onClick={confirmDraft}
-                                    className="w-full mt-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 active:scale-95 transition-all text-xs uppercase tracking-widest flex items-center justify-center gap-2"
-                                >
-                                    Confirmar Acciones
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                    </svg>
-                                </button>
-                            </div>
-                        ) : (
-                            <div className="text-center text-rose-500 text-sm font-bold">
-                                No se generaron acciones válidas.
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
-        );
+    const handleEditEvent = (event) => {
+        setSelectedEvent(event);
+        setIsEditModalOpen(true);
     };
 
-
-    const EventItem = ({ event }) => (
-        <div key={event.id} className="relative pl-12 flex items-center justify-between group">
-            {/* Category Icon */}
-            <div className={`absolute left-0 w-8 h-8 rounded-xl flex items-center justify-center shadow-sm border border-gray-100 transition-all group-hover:scale-110 ${event.entity?.category === 'ASSET' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'}`}>
-                {event.entity?.category === 'ASSET' ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
-                        <path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1V5a1 1 0 00-1-1H3zM14 7a1 1 0 00-1 1v6.05a2.5 2.5 0 014.9 0H18a1 1 0 001-1V8a1 1 0 00-1-1h-4z" />
-                    </svg>
-                ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z" />
-                        <path fillRule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clipRule="evenodd" />
-                    </svg>
-                )}
-            </div>
-
-            <div className="flex-1 min-w-0">
-                <p className="font-bold text-gray-900 text-sm leading-tight truncate">{event.title}</p>
-                <div className="flex items-center gap-2">
-                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight truncate">
-                        {event.entity?.name || 'Sistema'}
-                    </p>
-                    <span className="text-[10px] text-gray-200">•</span>
-                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">
-                        {new Date(event.occurred_at).toLocaleDateString('es-ES', { month: 'short', day: 'numeric' })}
-                    </p>
-                </div>
-            </div>
-
-            <div className="text-right ml-4">
-                <p className={`font-black text-sm tracking-tight ${parseFloat(event.amount) < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                    {parseFloat(event.amount) > 0 ? '+' : ''}${Math.abs(event.amount).toLocaleString()}
-                </p>
-                {event.status === 'PAID' && (
-                    <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest leading-none">Pagado</span>
-                )}
-            </div>
-        </div>
-    );
-
-    const getUrgencyColor = (days) => {
-        if (days < 3) return 'text-rose-600 bg-rose-50 border-rose-100';
-        if (days < 7) return 'text-amber-600 bg-amber-50 border-amber-100';
-        return 'text-gray-500 bg-gray-50 border-gray-100';
+    const handleQuickFix = (e, event) => {
+        e.stopPropagation();
+        setSelectedEvent(event);
+        setIsQuickFixOpen(true);
     };
 
-    const getRelativeDateLabel = (days) => {
-        if (days === 0) return 'Hoy';
-        if (days === 1) return 'Mañana';
-        if (days < 0) return `Vencido (${Math.abs(days)}d)`;
-        return `en ${days} días`;
+    const isEventIncomplete = (event) => {
+        if (!event.amount || event.amount === 0) return true;
+        // In the context of Dashboard history/ticker, entity_id should be a FINANCE entity (wallet)
+        if (!event.entity_id) return true;
+        if (!event.occurred_at) return true;
+
+        const title = event.title?.toLowerCase() || '';
+        const entityName = event.entity?.name?.toLowerCase() || event.entity_name?.toLowerCase() || '';
+
+        if (title.includes('desconocido') || title.includes('transacción omnibox')) return true;
+        if (entityName.includes('billetera principal') && title.includes('transacción omnibox')) return true;
+
+        return false;
     };
+
+    const formatCurrency = (amount) => {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+        }).format(amount);
+    };
+
     return (
-        <AuthenticatedLayout
-            user={auth.user}
-            header={
-                <div className="flex flex-col md:flex-row justify-between items-center gap-4 px-4 md:px-0">
-                    <div className="flex items-center justify-between w-full md:w-auto">
-                        <div>
-                            <h2 className="text-2xl font-black leading-tight text-gray-900 tracking-tight">
-                                Hola, {auth.user.name.split(' ')[0]}
-                            </h2>
-                            <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mt-0.5">Estado Vital y Financiero</p>
-                        </div>
-                        {/* Mobile Avatar */}
-                        <div className="md:hidden relative ml-4">
-                            <div className="w-10 h-10 rounded-full bg-indigo-50 border-2 border-indigo-100 flex items-center justify-center text-indigo-600 font-black text-xs">
-                                {auth.user.name.charAt(0)}
-                            </div>
-                            <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></div>
-                        </div>
+        <ZenLayout>
+            <Head title="Pulse" />
+
+            <TransactionEditModal
+                show={isEditModalOpen}
+                onClose={() => setIsEditModalOpen(false)}
+                event={selectedEvent}
+                entities={wallets || []}
+            />
+
+            <QuickFixModal
+                show={isQuickFixOpen}
+                onClose={() => setIsQuickFixOpen(false)}
+                event={selectedEvent}
+                entities={wallets || []}
+            />
+
+            <WalletManagementModal
+                show={isWalletModalOpen}
+                onClose={() => setIsWalletModalOpen(false)}
+                wallets={wallets || []}
+            />
+
+            {/* Mundo A: The Pulse */}
+            <div className="space-y-12 pb-24">
+
+                {/* 1. Net Worth Header */}
+                <section className="text-center py-8">
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Net Worth</h2>
+                    <h1 className="text-5xl font-black text-gray-900 tracking-tighter">
+                        {formatCurrency(total_balance)}
+                    </h1>
+                    <div className="mt-4 flex items-center justify-center gap-4 text-sm font-medium">
+                        <span className="text-emerald-600">+{formatCurrency(this_month.income)}</span>
+                        <span className="text-gray-300">|</span>
+                        <span className="text-rose-600">-{formatCurrency(this_month.expenses)}</span>
                     </div>
 
-                    {/* OMNIBOX - The Autonomy Interface */}
-                    <div className="w-full md:max-w-md relative z-50">
-                        <Omnibox />
+                    <div className="mt-8">
+                        <button
+                            onClick={() => setIsWalletModalOpen(true)}
+                            className="inline-flex items-center gap-2 px-6 py-3 bg-gray-50 text-gray-900 text-[10px] font-black uppercase tracking-widest rounded-full hover:bg-gray-100 transition-all border border-gray-100 shadow-sm"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                            </svg>
+                            Administrar Cuentas
+                        </button>
                     </div>
+                </section>
 
-                    {/* Desktop Avatar */}
-                    <div className="hidden md:block relative">
-                        <div className="w-10 h-10 rounded-full bg-indigo-50 border-2 border-indigo-100 flex items-center justify-center text-indigo-600 font-black text-xs">
-                            {auth.user.name.charAt(0)}
-                        </div>
-                        <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></div>
+                {/* 2. Bars Chart (Minimalist) */}
+                <section>
+                    <div className="flex items-end justify-between h-32 gap-2 px-2">
+                        {historical_flow.map((item, i) => {
+                            const max = Math.max(...historical_flow.map(f => f.expenses));
+                            const height = (item.expenses / max) * 100;
+                            return (
+                                <div key={i} className="flex-1 flex flex-col items-center gap-2 group">
+                                    <div
+                                        className="w-full bg-gray-100 rounded-t-sm transition-all group-hover:bg-indigo-200"
+                                        style={{ height: `${height}%` }}
+                                    ></div>
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase">{item.month}</span>
+                                </div>
+                            );
+                        })}
                     </div>
-                </div>
-            }
-        >
-            <Head title="Dashboard" />
+                </section>
 
-            <div className="py-6 md:py-12 bg-gray-50/50 min-h-screen">
-                <div className="mx-auto max-w-7xl sm:px-6 lg:px-8 space-y-8">
-
-                    {/* Hero Balance Card */}
-                    <div className="mx-4 md:mx-0 bg-gradient-to-br from-indigo-600 to-indigo-900 p-8 rounded-[2.5rem] shadow-2xl text-white relative overflow-hidden">
-                        <div className="relative z-10 flex flex-col items-center">
-                            <p className="text-[10px] font-black text-indigo-200 uppercase tracking-[0.3em] mb-2">Net Worth Estimado</p>
-                            <h3 className="text-5xl md:text-6xl font-black tracking-tighter mb-1">
-                                ${parseFloat(total_balance).toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                            </h3>
-                            <div className="flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full backdrop-blur-sm border border-white/10">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" />
-                                </svg>
-                                <span className="text-[10px] font-bold">+2.4% este mes</span>
-                            </div>
-                        </div>
-                        {/* Abstract background shapes */}
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 blur-3xl"></div>
-                        <div className="absolute bottom-0 left-0 w-24 h-24 bg-indigo-400/10 rounded-full -ml-12 -mb-12 blur-2xl"></div>
-                    </div>
-
-                    {/* Radar Widget: 30-Day Forecast */}
-                    <div className="mx-4 md:mx-0 grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {/* Liquidity Target */}
-                        <div className="md:col-span-1 bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm flex flex-col justify-center relative overflow-hidden group">
-                            <div className="relative z-10">
-                                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                    <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping"></span>
-                                    Radar de Liquidez
-                                </p>
-                                <h3 className="text-3xl font-black text-gray-900 tracking-tighter">
-                                    Necesitas <span className="text-indigo-600">${Math.round(forecast.projected_amount).toLocaleString()}</span>
-                                </h3>
-                                <p className="text-xs text-gray-400 font-bold mt-1">Para cubrir los próximos 30 días</p>
-                            </div>
-                            <div className="absolute -right-8 -top-8 w-24 h-24 bg-indigo-50 rounded-full group-hover:scale-110 transition-transform duration-500"></div>
-                        </div>
-
-                        {/* Upcoming Bills List */}
-                        <div className="md:col-span-2 bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm">
-                            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                                Próximos Compromisos
-                            </h3>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                {forecast.upcoming_bills.slice(0, 3).map((bill) => (
-                                    <div key={bill.id} className="p-4 rounded-2xl border border-gray-50 bg-gray-50/30 flex flex-col justify-between hover:bg-white hover:shadow-lg hover:border-indigo-100 transition-all cursor-default group">
-                                        <div>
-                                            <p className="font-bold text-gray-900 text-xs leading-tight mb-1 truncate group-hover:text-indigo-600 transition-colors">{bill.entity_name}</p>
-                                            <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${getUrgencyColor(bill.days_left)}`}>
-                                                {getRelativeDateLabel(bill.days_left)}
-                                            </span>
-                                        </div>
-                                        <div className="mt-4 flex items-center justify-between">
-                                            <p className="text-sm font-black text-gray-900 tracking-tight">${Math.round(Math.abs(bill.amount)).toLocaleString()}</p>
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-200 group-hover:text-indigo-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                {/* 3. Upcoming Ticker (Horizontal) */}
+                {forecast.upcoming_bills.length > 0 && (
+                    <section>
+                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-4 px-1">Próximos Compromisos</h3>
+                        <div className="flex overflow-x-auto gap-4 pb-4 scrollbar-hide">
+                            {forecast.upcoming_bills.map((bill) => (
+                                <div
+                                    key={bill.id}
+                                    onClick={() => handleEditEvent(bill)}
+                                    className="relative min-w-[160px] bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between cursor-pointer hover:shadow-md transition-shadow group"
+                                >
+                                    {isEventIncomplete(bill) && (
+                                        <button
+                                            onClick={(e) => handleQuickFix(e, bill)}
+                                            className="absolute top-2 right-2 w-6 h-6 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center hover:bg-rose-100 transition-colors z-10"
+                                        >
+                                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M8.445 14.832A1 1 0 0010 14v-2.798l1.274 1.274a1 1 0 101.414-1.414L10 8.328l-1.274 1.274a1 1 0 001.414 1.414L10 9.732V12a1 1 0 102 0V8.328l-1.274 1.274z" clipRule="evenodd" />
+                                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                                             </svg>
-                                        </div>
+                                        </button>
+                                    )}
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-900 truncate">{bill.entity_name}</p>
+                                        <p className="text-[10px] text-gray-400 mt-1">{bill.occurred_at}</p>
                                     </div>
-                                ))}
-                                {forecast.upcoming_bills.length === 0 && (
-                                    <div className="col-span-full py-6 text-center">
-                                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-1">✨ Todo bajo control</p>
-                                        <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">No tienes pagos pendientes para los próximos 30 días.</p>
+                                    <p className={`text-sm font-black mt-3 ${bill.days_left <= 3 ? 'text-rose-600' : 'text-gray-900'}`}>
+                                        {formatCurrency(bill.amount)}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {/* 4. Clean Feed */}
+                <section>
+                    <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-4 px-1">Actividad Reciente</h3>
+                    <div className="space-y-1">
+                        {history.map((event) => (
+                            <div
+                                key={event.id}
+                                onClick={() => handleEditEvent(event)}
+                                className="group flex items-center justify-between p-4 bg-white rounded-2xl border border-gray-50/50 hover:border-gray-100 transition-colors cursor-pointer active:scale-[0.98]"
+                            >
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${event.type === 'INCOME' ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-50 text-gray-600'
+                                        }`}>
+                                        {event.type === 'INCOME' ? '↓' : '↑'}
                                     </div>
-                                )}
+                                    <div>
+                                        <p className="text-sm font-bold text-gray-900">{event.entity?.name || event.title}</p>
+                                        <p className="text-[10px] text-gray-400 uppercase font-medium">{event.occurred_at}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    {isEventIncomplete(event) && (
+                                        <button
+                                            onClick={(e) => handleQuickFix(e, event)}
+                                            className="p-2 bg-rose-50 text-rose-500 rounded-full hover:bg-rose-100 transition-colors"
+                                            title="Completar información"
+                                        >
+                                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                            </svg>
+                                        </button>
+                                    )}
+                                    <p className={`text-sm font-black ${event.type === 'INCOME' ? 'text-emerald-600' : 'text-gray-900'
+                                        }`}>
+                                        {event.type === 'INCOME' ? '+' : '-'}{formatCurrency(Math.abs(event.amount))}
+                                    </p>
+                                </div>
                             </div>
-                        </div>
+                        ))}
                     </div>
-
-                    {/* Assets Section */}
-                    <div className="px-4 md:px-0">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-                                Mi Ecosistema
-                            </h3>
-                            <button className="text-[10px] font-black text-indigo-600 uppercase tracking-widest border-b-2 border-indigo-100">Ver Todos</button>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {entities && entities.length > 0 ? (
-                                entities.map(entity => (
-                                    <AssetCard
-                                        key={entity.id}
-                                        asset={entity}
-                                    />
-                                ))
-                            ) : (
-                                <div className="col-span-full py-12 bg-white rounded-3xl border border-dashed border-gray-200 text-center text-gray-400 font-bold text-sm">
-                                    Sin entidades registradas
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* History View */}
-                    <div className="mx-4 md:mx-0">
-                        <div className="bg-white overflow-hidden shadow-sm rounded-[2rem] border border-gray-100 p-8">
-                            <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-8 flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                Lo que ha pasado
-                            </h3>
-
-                            {history.length > 0 ? (
-                                <div className="space-y-8 relative before:absolute before:inset-0 before:left-4 before:w-0.5 before:bg-gray-50/50">
-                                    {history.map((event) => (
-                                        <EventItem key={event.id} event={event} />
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="text-center py-12 text-gray-400 font-bold text-sm bg-gray-50 rounded-2xl border border-dashed border-gray-100">
-                                    Sin historial reciente.
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                </section>
             </div>
-        </AuthenticatedLayout>
+        </ZenLayout>
     );
 }

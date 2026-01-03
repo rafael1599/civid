@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Models\LifeEvent;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class LifeEventController extends Controller
 {
@@ -43,6 +42,8 @@ class LifeEventController extends Controller
             'amount' => 'sometimes|numeric',
             'occurred_at' => 'sometimes|date',
             'status' => 'sometimes|string|in:COMPLETED,SCHEDULED,PAID',
+            'entity_id' => 'sometimes|exists:entities,id',
+            'description' => 'sometimes|string|nullable',
         ]);
 
         $lifeEvent->update($validated);
@@ -52,18 +53,19 @@ class LifeEventController extends Controller
 
     public function destroy(Request $request, $id)
     {
-        if (!str_contains($id, ',')) {
+        if (! str_contains($id, ',')) {
             $event = LifeEvent::findOrFail($id);
             if ($request->user()->id !== $event->user_id) {
                 abort(403);
             }
             $event->delete();
+
             return redirect()->back()->with('success', 'Evento eliminado.');
         }
 
         $ids = explode(',', $id);
         $request->user()->lifeEvents()->whereIn('id', $ids)->delete();
 
-        return redirect()->back()->with('success', count($ids) . ' eventos eliminados.');
+        return redirect()->back()->with('success', count($ids).' eventos eliminados.');
     }
 }

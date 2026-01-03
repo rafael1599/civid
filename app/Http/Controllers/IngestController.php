@@ -23,8 +23,22 @@ class IngestController extends Controller
 
             $draft = $ingestor->handle($input, $request->user());
 
-            // Handle clarification requests
-            if (isset($draft['clarification']) && !empty($draft['clarification'])) {
+            // 1. Check Confidence for Auto-Execution
+            $confidence = $ingestor->calculateConfidence($draft['actions'] ?? [], $request->user());
+
+            if ($confidence >= 90 && ! empty($draft['actions'])) {
+                $results = $ingestor->executeActions($draft, $request->user());
+
+                return response()->json([
+                    'success' => true,
+                    'auto_executed' => true,
+                    'message' => $draft['analysis'] ?? 'Registrado correctamente.',
+                    'actions_taken' => $results,
+                ]);
+            }
+
+            // 2. Handle clarification requests
+            if (isset($draft['clarification']) && ! empty($draft['clarification'])) {
                 $msg = is_array($draft['clarification'])
                     ? ($draft['clarification']['question'] ?? json_encode($draft['clarification']))
                     : (string) $draft['clarification'];
@@ -32,11 +46,12 @@ class IngestController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => $msg,
+                    'confidence' => $confidence,
                 ], 422);
             }
 
-            // Handle empty actions (invalid input or security commands)
-            if (empty($draft['actions'])) {
+            // 3. Handle empty actions but valid analysis
+            if (empty($draft['actions']) && empty($draft['analysis'])) {
                 return response()->json([
                     'success' => false,
                     'message' => $draft['error'] ?? 'No entendí eso. Prueba con:',
@@ -45,24 +60,25 @@ class IngestController extends Controller
                         'Odo 35000',
                         'Crear entidad: Tarjeta VISA',
                     ],
+                    'confidence' => $confidence,
                 ], 422);
             }
 
             return response()->json([
                 'success' => true,
                 'draft' => $draft,
+                'confidence' => $confidence,
                 'analysis' => $draft['analysis'] ?? null,
                 'original_input' => $validated['prompt'] ?? 'File Upload',
             ]);
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error('Ingestion controller failed', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Error en el sistema de ingesta: ' . $e->getMessage(),
+                'message' => 'Error en el sistema de ingesta: '.$e->getMessage(),
             ], 500);
         }
     }
