@@ -8,6 +8,7 @@
                 "includeFiles": [
                     "public/build/**",
                     "resources/views/**",
+                    "app/**",
                     "config/**",
                     "routes/**",
                     "bootstrap/**",
