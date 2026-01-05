@@ -18,23 +18,34 @@ class WalletController extends Controller
         ]);
 
         return DB::transaction(function () use ($user, $validated) {
+            \Illuminate\Support\Facades\Log::info('Creating wallet', ['validated' => $validated]);
+
             $wallet = $user->entities()->create([
                 'name' => $validated['name'],
                 'category' => 'FINANCE',
                 'status' => 'ACTIVE',
             ]);
 
+            \Illuminate\Support\Facades\Log::info('Wallet created', ['wallet' => $wallet->toArray()]);
+
             // Create an INITIAL_BALANCE event to set the balance
             if ($validated['balance'] != 0) {
-                $user->lifeEvents()->create([
+                $event = $user->lifeEvents()->create([
                     'entity_id' => $wallet->id,
                     'title' => 'Saldo Inicial',
                     'amount' => $validated['balance'],
                     'type' => $validated['balance'] >= 0 ? 'INCOME' : 'EXPENSE',
                     'status' => 'COMPLETED',
-                    'occurred_at' => now(),
+                    'occurred_at' => now()->toDateString(),
                     'metadata' => ['system_note' => 'Manual balance initialization'],
                 ]);
+                \Illuminate\Support\Facades\Log::info('Initial balance event created', ['event' => $event->toArray()]);
+            } else {
+                \Illuminate\Support\Facades\Log::info('Skipping initial balance event', ['balance' => $validated['balance']]);
+            }
+
+            if ($request->wantsJson()) {
+                return response()->json(['wallet' => $wallet, 'message' => 'Billetera creada.']);
             }
 
             return redirect()->back()->with('success', 'Billetera creada.');
@@ -53,6 +64,8 @@ class WalletController extends Controller
         ]);
 
         return DB::transaction(function () use ($wallet, $validated) {
+            \Illuminate\Support\Facades\Log::info('Updating wallet', ['id' => $wallet->id, 'validated' => $validated]);
+
             $wallet->update([
                 'name' => $validated['name'],
             ]);
@@ -61,16 +74,25 @@ class WalletController extends Controller
                 $currentBalance = $wallet->lifeEvents()->sum('amount');
                 $adjustment = $validated['balance'] - $currentBalance;
 
-                if ($adjustment != 0) {
-                    $wallet->user->lifeEvents()->create([
+                \Illuminate\Support\Facades\Log::info('Balance adjustment calc', [
+                    'target' => $validated['balance'],
+                    'current' => $currentBalance,
+                    'diff' => $adjustment
+                ]);
+
+                if (abs($adjustment) > 0.001) { // Float comparison safety
+                    $event = $wallet->user->lifeEvents()->create([
                         'entity_id' => $wallet->id,
                         'title' => 'Ajuste de Saldo',
                         'amount' => $adjustment,
                         'type' => $adjustment > 0 ? 'INCOME' : 'EXPENSE',
                         'status' => 'COMPLETED',
-                        'occurred_at' => now(),
+                        'occurred_at' => now()->toDateString(), // Use Date only for SQLite consistency
                         'metadata' => ['system_note' => 'Manual balance adjustment'],
                     ]);
+                    \Illuminate\Support\Facades\Log::info('Adjustment event created', ['event' => $event->toArray()]);
+                } else {
+                    \Illuminate\Support\Facades\Log::info('No adjustment needed');
                 }
             }
 

@@ -53,6 +53,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/entities', [\App\Http\Controllers\EntityController::class, 'store'])->name('entities.store');
     Route::patch('/entities/{entity}', [\App\Http\Controllers\EntityController::class, 'update'])->name('entities.update');
     Route::delete('/entities/{entity}', [\App\Http\Controllers\EntityController::class, 'destroy'])->name('entities.destroy');
+    Route::get('/life-events/suggest-category', [\App\Http\Controllers\LifeEventController::class, 'suggestCategory'])->name('life-events.suggest-category');
     Route::resource('life-events', \App\Http\Controllers\LifeEventController::class)->only(['store', 'update', 'destroy']);
 
     // Settings
@@ -60,6 +61,12 @@ Route::middleware('auth')->group(function () {
     Route::delete('/settings/integrations/disconnect-google', [\App\Http\Controllers\Settings\IntegrationsController::class, 'disconnectGoogle'])->name('settings.integrations.disconnect-google');
 
     Route::get('/api/entities', [\App\Http\Controllers\EntityController::class, 'index'])->name('api.entities.index');
+
+    // Categories Management
+    Route::resource('categories', \App\Http\Controllers\CategoryController::class)->only(['index', 'store', 'destroy']);
+
+    // Reports (No-Charts V1)
+    Route::get('/reports', [\App\Http\Controllers\ReportingController::class, 'index'])->name('reports.index');
 
     Route::get('/inbox', [\App\Http\Controllers\Inbox\PendingConfirmationController::class, 'index'])->name('inbox.index');
     Route::post('/inbox/scan', [\App\Http\Controllers\Inbox\PendingConfirmationController::class, 'scan'])->name('inbox.scan');
@@ -83,4 +90,4 @@ Route::middleware('auth')->group(function () {
     Route::get('/entities/{entity}', [\App\Http\Controllers\EntityController::class, 'show'])->name('entities.show');
 });
 
-require __DIR__.'/auth.php';
+require __DIR__ . '/auth.php';

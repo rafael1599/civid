@@ -1,13 +1,23 @@
 import { useForm } from '@inertiajs/react';
+import axios from 'axios';
 import Modal from '@/Components/Modal';
 import InputLabel from '@/Components/InputLabel';
 import TextInput from '@/Components/TextInput';
 import InputError from '@/Components/InputError';
 import PrimaryButton from '@/Components/PrimaryButton';
 import SecondaryButton from '@/Components/SecondaryButton';
-import { useEffect } from 'react';
+import DebugInfo from '@/Components/DebugInfo';
+import { useEffect, useState } from 'react';
 
-export default function TransactionEditModal({ show, onClose, event, entities }) {
+export default function TransactionEditModal({ show, onClose, event, entities, onDelete }) {
+    const [localEntities, setLocalEntities] = useState(entities || []);
+    const [isCreatingWallet, setIsCreatingWallet] = useState(false);
+    const [newWalletName, setNewWalletName] = useState('');
+
+    useEffect(() => {
+        setLocalEntities(entities || []);
+    }, [entities]);
+
     const { data, setData, patch, processing, errors, reset, transform } = useForm({
         id: '',
         title: '',
@@ -30,8 +40,30 @@ export default function TransactionEditModal({ show, onClose, event, entities })
         }
     }, [event]);
 
-    const submit = (e) => {
+    const submit = async (e) => {
         e.preventDefault();
+
+        let finalEntityId = data.entity_id;
+
+        // If creating a new wallet
+        if (isCreatingWallet && newWalletName) {
+            try {
+                const response = await axios.post(route('wallets.store'), {
+                    name: newWalletName,
+                    balance: 0
+                });
+
+                if (response.data && response.data.wallet) {
+                    finalEntityId = response.data.wallet.id;
+                    // Add to local list so it feels responsive
+                    setLocalEntities([...localEntities, response.data.wallet]);
+                }
+            } catch (error) {
+                console.error("Error creating wallet:", error);
+                // Ideally show error to user
+                return;
+            }
+        }
 
         // Ensure amount sign matches original event type
         const finalAmount = event.type === 'EXPENSE' || (event.type === 'PAYMENT' && event.amount < 0)
@@ -41,14 +73,22 @@ export default function TransactionEditModal({ show, onClose, event, entities })
         transform((data) => ({
             ...data,
             amount: finalAmount,
+            entity_id: finalEntityId,
         }));
 
         patch(route('life-events.update', { life_event: event.id }), {
             onSuccess: () => {
                 reset();
                 onClose();
+                setIsCreatingWallet(false);
+                setNewWalletName('');
             },
         });
+    };
+
+    const handleDelete = () => {
+        onDelete(event);
+        onClose();
     };
 
     return (
@@ -82,19 +122,60 @@ export default function TransactionEditModal({ show, onClose, event, entities })
 
                     {/* Entity (Wallet/Payee) */}
                     <div>
-                        <InputLabel value="Billetera" className="text-[10px] uppercase tracking-widest text-gray-400" />
-                        <select
-                            className="mt-1 block w-full rounded-2xl border-gray-100 bg-gray-50 text-sm font-medium focus:border-indigo-500 focus:ring-indigo-500"
-                            value={data.entity_id}
-                            onChange={(e) => setData('entity_id', e.target.value)}
-                        >
-                            <option value="">Seleccionar...</option>
-                            {entities.map((entity) => (
-                                <option key={entity.id} value={entity.id}>
-                                    {entity.name}
-                                </option>
-                            ))}
-                        </select>
+                        <div className="flex justify-between items-center mb-1">
+                            <InputLabel value="Billetera" className="text-[10px] uppercase tracking-widest text-gray-400" />
+                            {!isCreatingWallet && localEntities.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setIsCreatingWallet(true)}
+                                    className="text-[10px] text-indigo-500 font-bold hover:underline"
+                                >
+                                    + Crear Nueva
+                                </button>
+                            )}
+                            {isCreatingWallet && localEntities.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setIsCreatingWallet(false)}
+                                    className="text-[10px] text-gray-400 font-bold hover:underline"
+                                >
+                                    Cancelar
+                                </button>
+                            )}
+                        </div>
+
+                        {(isCreatingWallet || localEntities.length === 0) ? (
+                            <TextInput
+                                type="text"
+                                className="mt-1 block w-full rounded-2xl border-gray-100 bg-gray-50 text-sm font-medium focus:border-indigo-500 focus:ring-indigo-500"
+                                placeholder="Nombre de nueva billetera..."
+                                value={newWalletName}
+                                onChange={(e) => {
+                                    setNewWalletName(e.target.value);
+                                    setIsCreatingWallet(true); // Force true if editing
+                                }}
+                            />
+                        ) : (
+                            <select
+                                className="mt-1 block w-full rounded-2xl border-gray-100 bg-gray-50 text-sm font-medium focus:border-indigo-500 focus:ring-indigo-500"
+                                value={data.entity_id}
+                                onChange={(e) => {
+                                    if (e.target.value === 'NEW') {
+                                        setIsCreatingWallet(true);
+                                    } else {
+                                        setData('entity_id', e.target.value);
+                                    }
+                                }}
+                            >
+                                <option value="">Seleccionar...</option>
+                                {localEntities.map((entity) => (
+                                    <option key={entity.id} value={entity.id}>
+                                        {entity.name}
+                                    </option>
+                                ))}
+                                <option value="NEW" className="font-bold text-indigo-600">+ Crear Nueva Billetera...</option>
+                            </select>
+                        )}
                         <InputError message={errors.entity_id} className="mt-2" />
                     </div>
 
@@ -125,33 +206,27 @@ export default function TransactionEditModal({ show, onClose, event, entities })
                     </div>
                 </div>
 
-                <div className="mt-8 flex gap-3">
-                    <SecondaryButton onClick={onClose} className="flex-1 justify-center py-4 rounded-2xl border-none bg-gray-100 hover:bg-gray-200">
-                        Cancelar
-                    </SecondaryButton>
-                    <PrimaryButton className="flex-1 justify-center py-4 rounded-2xl bg-black hover:bg-gray-800 shadow-xl shadow-black/10" disabled={processing}>
-                        {processing ? 'Guardando...' : 'Actualizar'}
-                    </PrimaryButton>
+                <div className="mt-8 flex flex-col gap-3">
+                    <div className="flex gap-3">
+                        <SecondaryButton onClick={onClose} className="flex-1 justify-center py-4 rounded-2xl border-none bg-gray-100 hover:bg-gray-200">
+                            Cancelar
+                        </SecondaryButton>
+                        <PrimaryButton className="flex-1 justify-center py-4 rounded-2xl bg-black hover:bg-gray-800 shadow-xl shadow-black/10" disabled={processing}>
+                            {processing ? 'Guardando...' : 'Actualizar'}
+                        </PrimaryButton>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={handleDelete}
+                        className="w-full py-4 text-rose-500 font-bold text-sm uppercase tracking-widest hover:bg-rose-50 rounded-2xl transition-colors"
+                    >
+                        Eliminar Transacción
+                    </button>
                 </div>
 
                 {/* Debug Section (Only for Dev) */}
-                <div className="mt-12 pt-6 border-t border-gray-100">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            const debugEl = document.getElementById('debug-raw-data');
-                            if (debugEl) debugEl.classList.toggle('hidden');
-                        }}
-                        className="text-[9px] font-black uppercase tracking-widest text-gray-300 hover:text-gray-500 transition-colors"
-                    >
-                        [ DEBUG INFO ]
-                    </button>
-                    <div id="debug-raw-data" className="hidden mt-4 p-4 bg-gray-900 rounded-2xl overflow-x-auto">
-                        <pre className="text-[10px] text-emerald-400 font-mono">
-                            {JSON.stringify(event, null, 2)}
-                        </pre>
-                    </div>
-                </div>
+                <DebugInfo data={event} />
             </form>
         </Modal>
     );

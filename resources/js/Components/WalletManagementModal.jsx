@@ -5,6 +5,8 @@ import TextInput from '@/Components/TextInput';
 import InputError from '@/Components/InputError';
 import PrimaryButton from '@/Components/PrimaryButton';
 import SecondaryButton from '@/Components/SecondaryButton';
+import DebugInfo from '@/Components/DebugInfo';
+import useDeleteResource from '@/Hooks/useDeleteResource';
 import { useState, useEffect } from 'react';
 
 export default function WalletManagementModal({ show, onClose, wallets }) {
@@ -56,15 +58,16 @@ export default function WalletManagementModal({ show, onClose, wallets }) {
         }
     };
 
+    const { deleteResource } = useDeleteResource();
+
     const handleDelete = () => {
-        if (confirm('¿Estás seguro de que quieres eliminar esta cuenta?')) {
-            destroy(route('wallets.destroy', { wallet: selectedWallet.id }), {
-                onSuccess: () => {
-                    setView('list');
-                    reset();
-                }
-            });
-        }
+        deleteResource(route('wallets.destroy', { wallet: selectedWallet.id }), {
+            title: `la cuenta "${selectedWallet.name}"`,
+            onSuccess: () => {
+                setView('list');
+                reset(); // Reset form data
+            }
+        });
     };
 
     const formatCurrency = (amount) => {
@@ -215,6 +218,8 @@ export default function WalletManagementModal({ show, onClose, wallets }) {
                                     Cancelar
                                 </button>
                             </div>
+
+                            <DebugInfo data={selectedWallet || data} className="border-[#2d2825]" />
                         </form>
                     )}
                 </div>

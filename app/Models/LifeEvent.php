@@ -34,6 +34,11 @@ class LifeEvent extends Model
         return $this->belongsTo(Entity::class);
     }
 
+    public function destinationEntity(): BelongsTo
+    {
+        return $this->belongsTo(Entity::class, 'to_entity_id');
+    }
+
     public function documents(): HasMany
     {
         return $this->hasMany(Document::class);

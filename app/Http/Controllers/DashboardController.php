@@ -27,8 +27,7 @@ class DashboardController extends Controller
             ->sum(DB::raw('abs(amount)'));
 
         $upcoming_bills = $user->lifeEvents()
-            ->where('status', 'SCHEDULED')
-            ->whereBetween('occurred_at', [$now->toDateString(), $thirtyDaysFromNow->toDateString()])
+            ->where('occurred_at', '>', $now->toDateString())
             ->with('entity:id,name,category')
             ->orderBy('occurred_at', 'asc')
             ->take(5)
@@ -49,16 +48,18 @@ class DashboardController extends Controller
             });
 
         // --- Real Net Worth Calculation ---
-        // 1. Transactional Base (Cash/History)
-        $cash_balance = $user->lifeEvents()->sum('amount');
+        // 1. Transactional Base (Liquid Assets) - Sum timestamps of FINANCE entities
+        // We calculate this dynamically based on the events LINKED to the wallets, ensuring we only count real money.
+        $finance_entities = $user->entities()->where('category', 'FINANCE')->get();
 
-        // 2. Asset Values (Market Value)
-        $asset_value = $user->entities()
-            ->where('category', 'ASSET')
-            ->get()
-            ->sum(function ($entity) {
-                return (float) ($entity->metadata['value'] ?? 0);
-            });
+        $cash_balance = $finance_entities->sum(function ($wallet) use ($now) {
+            return $wallet->lifeEvents()
+                ->where('occurred_at', '<=', $now->copy()->endOfDay())
+                ->sum('amount');
+        });
+
+        // 2. Asset Values (Market Value) - DISABLED per user request for simplification
+        // $asset_value = ...
 
         // 3. Liabilities (Remaining Debt)
         $total_liabilities = $user->entities()
@@ -68,11 +69,11 @@ class DashboardController extends Controller
                 return (float) ($entity->metadata['remaining_balance'] ?? $entity->metadata['balance'] ?? 0);
             });
 
-        $total_balance = ($cash_balance + $asset_value) - $total_liabilities;
+        $total_balance = $cash_balance - $total_liabilities;
 
         $history = $user->lifeEvents()
             ->where(function ($query) use ($now) {
-                $query->where('occurred_at', '<=', $now->toDateString())
+                $query->where('occurred_at', '<=', $now->copy()->endOfDay())
                     ->orWhere('status', 'COMPLETED');
             })
             ->with(['entity:id,name,category'])
@@ -90,48 +91,97 @@ class DashboardController extends Controller
         // --- This Month Flow ---
         $this_month_income = $user->lifeEvents()
             ->where('type', 'INCOME')
-            ->whereBetween('occurred_at', [$now->startOfMonth()->toDateString(), $now->endOfMonth()->toDateString()])
+            ->where('status', '!=', 'SCHEDULED')
+            ->whereBetween('occurred_at', [$now->copy()->startOfMonth()->toDateString(), $now->copy()->endOfMonth()->toDateString()])
             ->sum('amount');
 
         $this_month_expenses = $user->lifeEvents()
             ->where('type', 'EXPENSE')
-            ->whereBetween('occurred_at', [$now->startOfMonth()->toDateString(), $now->endOfMonth()->toDateString()])
+            ->where('status', '!=', 'SCHEDULED')
+            ->whereBetween('occurred_at', [$now->copy()->startOfMonth()->toDateString(), $now->copy()->endOfMonth()->toDateString()])
             ->sum(DB::raw('abs(amount)'));
 
-        // --- Historical Flow (Last 6 Months) ---
-        $historical_flow = collect(range(5, 0))->map(function ($i) use ($user) {
-            $month = Carbon::now()->subMonths($i);
-            $income = $user->lifeEvents()
-                ->where('type', 'INCOME')
-                ->whereBetween('occurred_at', [$month->startOfMonth()->toDateString(), $month->endOfMonth()->toDateString()])
-                ->sum('amount');
-            $expenses = $user->lifeEvents()
-                ->where('type', 'EXPENSE')
-                ->whereBetween('occurred_at', [$month->startOfMonth()->toDateString(), $month->endOfMonth()->toDateString()])
-                ->sum(DB::raw('abs(amount)'));
+        // --- Top Activity (This Month) ---
+        $top_expenses = $user->lifeEvents()
+            ->where('type', 'EXPENSE')
+            ->where('status', '!=', 'SCHEDULED')
+            ->whereBetween('occurred_at', [$now->copy()->startOfMonth()->toDateString(), $now->toDateString()])
+            ->orderBy(DB::raw('abs(amount)'), 'desc')
+            ->take(4)
+            ->get(['id', 'title', 'amount'])
+            ->map(fn($e) => [
+                'id' => $e->id,
+                'name' => $e->title,
+                'value' => (float) abs($e->amount),
+            ]);
 
-            return [
-                'month' => $month->format('M'),
-                'income' => (float) $income,
-                'expenses' => (float) $expenses,
-            ];
-        });
+        $top_income = $user->lifeEvents()
+            ->where('type', 'INCOME')
+            ->where('status', '!=', 'SCHEDULED')
+            ->whereBetween('occurred_at', [$now->copy()->startOfMonth()->toDateString(), $now->toDateString()])
+            ->orderBy('amount', 'desc')
+            ->take(4)
+            ->get(['id', 'title', 'amount'])
+            ->map(fn($e) => [
+                'id' => $e->id,
+                'name' => $e->title,
+                'value' => (float) $e->amount,
+            ]);
 
         // Get ALL active entities for the Ecosistema View
         $all_active_entities = $user->entities()
             ->where('status', 'ACTIVE')
             ->get(['id', 'name', 'category']);
 
-        $wallets = $all_active_entities->where('category', 'FINANCE')->values()->map(function ($wallet) {
-            $wallet->balance = (float) $wallet->lifeEvents()->sum('amount');
+        $wallets = $all_active_entities->where('category', 'FINANCE')->values()->map(function ($wallet) use ($now) {
+            $wallet->balance = (float) $wallet->lifeEvents()
+                ->where('occurred_at', '<=', $now->copy()->endOfDay())
+                ->sum('amount');
 
             return $wallet;
         });
-        $other_entities = $all_active_entities->where('category', '!=', 'FINANCE')->values();
+        $other_entities = $all_active_entities->where('category', '!=', 'FINANCE')->values()->map(function ($entity) use ($now) {
+            // Calculate Risk Status (Semaphore)
+            $alertStatus = 'SAFE';
+            $upcomingEvent = $entity->lifeEvents()
+                ->where('status', 'SCHEDULED')
+                ->where('occurred_at', '>=', $now->toDateString())
+                ->orderBy('occurred_at', 'asc')
+                ->first();
+
+            if ($upcomingEvent) {
+                $daysUntil = $now->diffInDays($upcomingEvent->occurred_at, false);
+                if ($daysUntil <= 7) {
+                    $alertStatus = 'CRITICAL';
+                } elseif ($daysUntil <= 30) {
+                    $alertStatus = 'WARNING';
+                }
+            }
+
+            $entity->alert_status = $alertStatus;
+
+            // Include relationships for the graph view
+            $entity->load(['childRelationships', 'parentRelationships']);
+
+            return $entity;
+        });
 
         $active_entities_counts = $all_active_entities
             ->groupBy('category')
             ->map->count();
+
+        // Ecosystem / Graph Data (Mundo B)
+        $ecosystem_data = $other_entities->map(fn($entity) => [
+            'id' => $entity->id,
+            'name' => $entity->name,
+            'category' => $entity->category,
+            'status' => $entity->alert_status,
+            'value' => (float) ($entity->metadata['value'] ?? 0),
+            'connections' => $entity->childRelationships->map(fn($rel) => [
+                'target' => $rel->child_entity_id,
+                'type' => $rel->relationship_type,
+            ])->values(),
+        ]);
 
         return Inertia::render('Dashboard', [
             'total_balance' => (float) $total_balance,
@@ -143,7 +193,11 @@ class DashboardController extends Controller
                 'income' => (float) $this_month_income,
                 'expenses' => (float) $this_month_expenses,
             ],
-            'historical_flow' => $historical_flow,
+            'top_activity' => [
+                'expenses' => $top_expenses,
+                'income' => $top_income,
+            ],
+            'ecosystem' => $ecosystem_data,
             'forecast' => [
                 'projected_amount' => $projected_expenses,
                 'upcoming_bills' => $upcoming_bills,

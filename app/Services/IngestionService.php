@@ -13,7 +13,8 @@ class IngestionService
         protected \App\AI\ToolRegistry $registry,
         protected CategoryService $categoryService,
         protected ReconciliationService $reconciliationService
-    ) {}
+    ) {
+    }
 
     /**
      * The core brain of the ingestion system.
@@ -25,7 +26,7 @@ class IngestionService
             ->select('id', 'name', 'category', 'status')
             ->where('status', 'ACTIVE')
             ->get()
-            ->map(fn ($e) => "{id: \"{$e->id}\", name: \"{$e->name}\", category: \"{$e->category}\"}")
+            ->map(fn($e) => "{id: \"{$e->id}\", name: \"{$e->name}\", category: \"{$e->category}\"}")
             ->implode("\n");
 
         $media = null;
@@ -49,7 +50,7 @@ class IngestionService
             $analysisResult = $tool->execute($needsAnalytics['params']);
 
             // Second Pass: Ask LLM to draft the final response based on the "Pull" data
-            $secondMessage = "He ejecutado el análisis solicitado. Resultado:\n".json_encode($analysisResult)."\n\nAhora, redacta la respuesta final para el usuario en el campo 'analysis' y mantén las otras acciones si son necesarias.";
+            $secondMessage = "He ejecutado el análisis solicitado. Resultado:\n" . json_encode($analysisResult) . "\n\nAhora, redacta la respuesta final para el usuario en el campo 'analysis' y mantén las otras acciones si son necesarias.";
             $response = $this->queryLLM($entityContext, $userMessage, $secondMessage); // Media not needed again if we have context, or we can pass it if we want rigorous consistence.
             // For efficiency, avoiding resending heavy media if not strictly assumed necessary, but Gemini is stateless.
             // Ideally we pass context, but simpler to just re-ask.
@@ -102,7 +103,7 @@ EOT;
 
         $prompt = $this->buildSystemPrompt($entityContext);
 
-        $userParts = [['text' => $prompt."\n\nUSER INPUT:\n".$userMessage]];
+        $userParts = [['text' => $prompt . "\n\nUSER INPUT:\n" . $userMessage]];
 
         if ($media) {
             $userParts[] = [
@@ -132,7 +133,7 @@ EOT;
                     ],
                 ]);
 
-            if (! $response->successful()) {
+            if (!$response->successful()) {
                 $errorBody = $response->body();
                 Log::error('Gemini API Error', ['body' => $errorBody]);
 
@@ -171,7 +172,7 @@ EOT;
 
         foreach ($actions as $action) {
             $toolName = $action['tool'] ?? $action['tool_name'] ?? null;
-            if (! $toolName) {
+            if (!$toolName) {
                 continue;
             }
 
@@ -196,7 +197,7 @@ EOT;
                 // For consistency with previous behavior, let's catch but return error structure.
                 $results[] = [
                     'success' => false,
-                    'message' => "Error executing {$toolName}: ".$e->getMessage(),
+                    'message' => "Error executing {$toolName}: " . $e->getMessage(),
                 ];
             }
         }
@@ -252,7 +253,7 @@ EOT;
 
     protected function upsertEntity(User $user, array $params, array &$createdEntities): array
     {
-        if (! isset($params['category'], $params['name'])) {
+        if (!isset($params['category'], $params['name'])) {
             return ['success' => false, 'message' => 'upsert_entity requires: category, name'];
         }
 
@@ -268,7 +269,7 @@ EOT;
                 ->where('status', 'ACTIVE')
                 ->first();
 
-            if (! $entity) {
+            if (!$entity) {
                 return ['success' => false, 'message' => 'No vehicle found'];
             }
 
@@ -302,7 +303,7 @@ EOT;
             if (isset($params['balance']) && $params['balance'] != 0) {
                 $user->lifeEvents()->create([
                     'entity_id' => $entity->id,
-                    'title' => 'Balance Inicial - '.$entity->name,
+                    'title' => 'Balance Inicial - ' . $entity->name,
                     'amount' => $params['balance'],
                     'occurred_at' => now()->toDateString(),
                     'type' => $params['balance'] >= 0 ? 'INCOME' : 'EXPENSE',
@@ -319,14 +320,14 @@ EOT;
 
     protected function linkEntities(User $user, array $params, array $createdEntities): array
     {
-        if (! isset($params['subject_id'], $params['relation'], $params['object_id'])) {
+        if (!isset($params['subject_id'], $params['relation'], $params['object_id'])) {
             return ['success' => false, 'message' => 'link_entities requires: subject_id, relation, object_id'];
         }
 
         $subjectId = $this->resolveEntityId($user, $params['subject_id'], $createdEntities);
         $objectId = $this->resolveEntityId($user, $params['object_id'], $createdEntities);
 
-        if (! $subjectId || ! $objectId) {
+        if (!$subjectId || !$objectId) {
             return ['success' => false, 'message' => 'Could not resolve entity IDs'];
         }
 
@@ -352,16 +353,20 @@ EOT;
 
     protected function recordEvent(User $user, array $params, array $createdEntities, array &$createdEvents): array
     {
+        // 1. Payee Normalization
+        $rawTitle = $params['description'] ?? $params['note'] ?? 'Transacción Omnibox';
+        $cleanTitle = $this->normalizePayee($rawTitle);
+
         $entityId = $this->resolveEntityId($user, $params['entity_id'] ?? '', $createdEntities);
 
         // --- Fallback Mechanism: Ensure we have a wallet ---
-        if (! $entityId) {
+        if (!$entityId) {
             $fallback = $user->entities()
                 ->where('category', 'FINANCE')
                 ->where('status', 'ACTIVE')
                 ->first();
 
-            if (! $fallback) {
+            if (!$fallback) {
                 // Critical: Create a default wallet if none exists to avoid losing the transaction
                 $fallback = $user->entities()->create([
                     'name' => 'Billetera Principal',
@@ -371,6 +376,24 @@ EOT;
                 Log::info("Auto-created default wallet for user {$user->id}");
             }
             $entityId = $fallback->id;
+        }
+
+        // --- Auto-Categorization (Intelligent Engine) ---
+        // Look for recent events with the SAME clean title to find their Category (to_entity_id)
+        $suggestedCategory = null;
+        if (!isset($params['to_entity_id'])) {
+            $lastMatch = $user->lifeEvents()
+                ->where('title', $cleanTitle) // We look for exact match on the normalized name
+                ->whereNotNull('to_entity_id')
+                ->orderBy('occurred_at', 'desc')
+                ->first();
+
+            if ($lastMatch) {
+                $suggestedCategory = $lastMatch->to_entity_id;
+                Log::info("Auto-categorized '{$cleanTitle}' based on history.");
+            }
+        } else {
+            $suggestedCategory = $this->resolveEntityId($user, $params['to_entity_id'], $createdEntities);
         }
 
         $entity = $user->entities()->find($entityId);
@@ -391,7 +414,8 @@ EOT;
 
         $event = $user->lifeEvents()->create([
             'entity_id' => $entityId,
-            'title' => $params['description'] ?? $params['note'] ?? 'Transacción Omnibox',
+            'to_entity_id' => $suggestedCategory, // Link to Category
+            'title' => $cleanTitle, // Use normalized title
             'amount' => $params['amount'],
             'occurred_at' => $params['date'],
             'type' => $params['type'] ?? ($params['amount'] < 0 ? 'EXPENSE' : 'INCOME'),
@@ -399,15 +423,40 @@ EOT;
             'metadata' => [
                 'source' => 'autonomous_ingestion',
                 'tool' => 'record_financial_event',
-                'original_input' => $params['description'] ?? null,
+                'original_input' => $rawTitle,
+                'is_auto_categorized' => !empty($suggestedCategory),
             ],
         ]);
 
-        if (! empty($params['temp_id'])) {
+        if (!empty($params['temp_id'])) {
             $createdEvents[$params['temp_id']] = $event;
         }
 
         return ['success' => true, 'message' => "Evento '{$event->title}' registrado con éxito", 'event_id' => $event->id];
+    }
+
+    /**
+     * Normalize Payee/Title strings removing garbage.
+     */
+    protected function normalizePayee(string $input): string
+    {
+        $input = strtoupper(trim($input));
+
+        // Common Prefixes to remove
+        $prefixes = ['PAYPAL *', 'SQ *', 'TST *', 'UBER *'];
+        foreach ($prefixes as $prefix) {
+            if (str_starts_with($input, $prefix)) {
+                $input = substr($input, strlen($prefix));
+            }
+        }
+
+        // Remove sequences of numbers often found in bank descriptions (e.g. "WALMART 3942") if they are at the end
+        // Simple regex: Remove trailing digit sequences if length > 3
+        $input = preg_replace('/\s+\d{4,}$/', '', $input);
+
+        // Remove "TRIP" or generic identifiers if necessary, but keep it simple for now.
+
+        return ucwords(strtolower($input));
     }
 
     protected function setRecurrence(User $user, array $params, array $createdEvents): array
@@ -435,7 +484,7 @@ EOT;
             }
 
             // 2. Date (20%)
-            if (! empty($params['date'])) {
+            if (!empty($params['date'])) {
                 $score += 20;
             }
 

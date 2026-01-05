@@ -7,13 +7,24 @@ import WalletManagementModal from '@/Components/WalletManagementModal';
 import { useState } from 'react';
 import { router } from '@inertiajs/react';
 
-export default function Dashboard({ total_balance, history, wallets, entities, active_entities, this_month, historical_flow, forecast }) {
+// New component imports
+import NetWorthHeader from '@/Components/Dashboard/NetWorthHeader';
+import TopActivityChart from '@/Components/Dashboard/TopActivityChart';
+import RecentActivity from '@/Components/Dashboard/RecentActivity';
+import FinanceActionMenu from '@/Components/Dashboard/FinanceActionMenu';
+import TransactionFlowModal from '@/Components/Dashboard/TransactionFlowModal';
+import useDeleteResource from '@/Hooks/useDeleteResource';
+
+export default function Dashboard({ total_balance, history, wallets, entities, active_entities, this_month, top_activity, ecosystem, forecast }) {
     const { url } = usePage();
     const [selectedEvent, setSelectedEvent] = useState(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [topActivityType, setTopActivityType] = useState('EXPENSES');
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isQuickFixOpen, setIsQuickFixOpen] = useState(false);
     const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
+    const [isFlowModalOpen, setIsFlowModalOpen] = useState(false);
+    const [flowType, setFlowType] = useState('EXPENSE');
 
     const handleEditEvent = (event) => {
         setSelectedEvent(event);
@@ -24,10 +35,6 @@ export default function Dashboard({ total_balance, history, wallets, entities, a
         e.stopPropagation();
         setSelectedEvent(event);
         setIsQuickFixOpen(true);
-    };
-
-    const handleCreateCommitment = () => {
-        setIsCreateModalOpen(true);
     };
 
     const isEventIncomplete = (event) => {
@@ -60,6 +67,53 @@ export default function Dashboard({ total_balance, history, wallets, entities, a
                 preserveScroll: true
             });
         }
+    };
+
+    const { deleteResource } = useDeleteResource();
+
+    const handleDeleteEvent = (event) => {
+        deleteResource(route('life-events.destroy', event.id), {
+            title: `"${event.title}"`
+        });
+    };
+
+    // Swipe-to-delete logic
+    const [touchStart, setTouchStart] = useState(null);
+    const [swipeOffset, setSwipeOffset] = useState(0);
+    const [swipingId, setSwipingId] = useState(null);
+
+    const minSwipeDistance = 100;
+
+    const onTouchStart = (e, id) => {
+        setTouchStart(e.targetTouches[0].clientX);
+        setSwipingId(id);
+        setSwipeOffset(0);
+    };
+
+    const onTouchMove = (e) => {
+        if (!touchStart) return;
+        const currentTouch = e.targetTouches[0].clientX;
+        const diff = currentTouch - touchStart;
+
+        // Only allow swiping to the right
+        if (diff > 0) {
+            setSwipeOffset(diff);
+
+            // Prevent dashboard/page horizontal movement when swiping an item
+            if (diff > 10 && e.cancelable) {
+                e.preventDefault();
+            }
+        }
+    };
+
+    const onTouchEnd = (event) => {
+        if (swipeOffset > minSwipeDistance) {
+            handleDeleteEvent(event);
+        }
+
+        setSwipingId(null);
+        setTouchStart(null);
+        setSwipeOffset(0);
     };
 
     const formatCurrency = (amount) => {
@@ -100,21 +154,17 @@ export default function Dashboard({ total_balance, history, wallets, entities, a
 
     return (
         <ZenLayout>
-            <Head title="Pulse" />
+            <Head title="Home" />
 
             <TransactionEditModal
                 show={isEditModalOpen}
                 onClose={() => setIsEditModalOpen(false)}
                 event={selectedEvent}
-                entities={[...(wallets || []), ...(entities || [])]}
+                entities={wallets || []}
+                onDelete={handleDeleteEvent}
             />
 
-            <TransactionCreateModal
-                show={isCreateModalOpen}
-                onClose={() => setIsCreateModalOpen(false)}
-                entities={[...(wallets || []), ...(entities || [])]}
-                defaultStatus="SCHEDULED"
-            />
+            {/* Commitment modal removed as per user request */}
 
             <QuickFixModal
                 show={isQuickFixOpen}
@@ -131,165 +181,38 @@ export default function Dashboard({ total_balance, history, wallets, entities, a
 
             {/* Mundo A: The Pulse */}
             <div className="space-y-12 pb-24">
+                <NetWorthHeader
+                    total_balance={total_balance}
+                    this_month={this_month}
+                    forecast={forecast}
+                    onWalletClick={() => setIsWalletModalOpen(true)}
+                    upcomingBills={forecast.upcoming_bills}
+                    handleEditEvent={handleEditEvent}
+                    handleQuickFix={handleQuickFix}
+                    handleMarkAsPaid={handleMarkAsPaid}
+                    isEventIncomplete={isEventIncomplete}
+                    formatDate={formatDate}
+                />
 
-                {/* 1. Net Worth Header */}
-                <section className="text-center py-8">
-                    <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Net Worth</h2>
-                    <h1 className="text-5xl font-black text-gray-900 tracking-tighter">
-                        {formatCurrency(total_balance)}
-                    </h1>
-                    <div className="mt-4 flex items-center justify-center gap-4 text-sm font-medium">
-                        <span className="text-emerald-600">+{formatCurrency(this_month.income)}</span>
-                        <span className="text-gray-300">|</span>
-                        <span className="text-rose-600">-{formatCurrency(this_month.expenses)}</span>
-                    </div>
+                <TopActivityChart top_activity={top_activity} topActivityType={topActivityType} setTopActivityType={setTopActivityType} formatCurrency={formatCurrency} />
 
-                    <div className="mt-8">
-                        <button
-                            onClick={() => setIsWalletModalOpen(true)}
-                            className="inline-flex items-center gap-2 px-6 py-3 bg-gray-50 text-gray-900 text-[10px] font-black uppercase tracking-widest rounded-full hover:bg-gray-100 transition-all border border-gray-100 shadow-sm"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                            </svg>
-                            Administrar Cuentas
-                        </button>
-                    </div>
-                </section>
-
-                {/* 2. Bars Chart (Minimalist) */}
-                <section>
-                    <div className="flex items-end justify-between h-32 gap-2 px-2">
-                        {historical_flow.map((item, i) => {
-                            const max = Math.max(...historical_flow.map(f => f.expenses));
-                            const height = (item.expenses / max) * 100;
-                            return (
-                                <div key={i} className="flex-1 flex flex-col items-center gap-2 group">
-                                    <div
-                                        className="w-full bg-gray-100 rounded-t-sm transition-all group-hover:bg-indigo-200"
-                                        style={{ height: `${height}%` }}
-                                    ></div>
-                                    <span className="text-[10px] font-bold text-gray-400 uppercase">{item.month}</span>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </section>
-
-                {/* 3. Upcoming Ticker (Horizontal) */}
-                <section>
-                    <div className="flex items-center justify-between mb-4 px-1">
-                        <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Próximos Compromisos</h3>
-                        <button
-                            onClick={handleCreateCommitment}
-                            className="w-6 h-6 flex items-center justify-center bg-gray-50 text-gray-400 hover:text-indigo-600 hover:bg-gray-100 rounded-full transition-colors"
-                            title="Añadir compromiso"
-                        >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                            </svg>
-                        </button>
-                    </div>
-                    <div className="flex overflow-x-auto gap-4 pb-4 scrollbar-hide">
-                        {/* Add Commitment Card */}
-                        <div
-                            onClick={handleCreateCommitment}
-                            className="relative min-w-[160px] bg-gray-50/50 p-4 rounded-2xl border-2 border-dashed border-gray-100 flex flex-col items-center justify-center cursor-pointer hover:border-indigo-100 hover:bg-indigo-50/10 transition-all group"
-                        >
-                            <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-gray-300 group-hover:text-indigo-400 transition-colors shadow-sm mb-2">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                                </svg>
-                            </div>
-                            <p className="text-[10px] font-black uppercase text-gray-400 group-hover:text-indigo-400 transition-colors">Nuevo</p>
-                        </div>
-
-                        {forecast.upcoming_bills.map((bill) => (
-                            <div
-                                key={bill.id}
-                                onClick={() => handleEditEvent(bill)}
-                                className="relative min-w-[160px] bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between cursor-pointer hover:shadow-md transition-shadow group"
-                            >
-                                {isEventIncomplete(bill) && (
-                                    <button
-                                        onClick={(e) => handleQuickFix(e, bill)}
-                                        className="absolute top-2 right-2 w-6 h-6 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center hover:bg-rose-100 transition-colors z-10"
-                                    >
-                                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                            <path fillRule="evenodd" d="M8.445 14.832A1 1 0 0010 14v-2.798l1.274 1.274a1 1 0 101.414-1.414L10 8.328l-1.274 1.274a1 1 0 001.414 1.414L10 9.732V12a1 1 0 102 0V8.328l-1.274 1.274z" clipRule="evenodd" />
-                                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                                        </svg>
-                                    </button>
-                                )}
-                                <div>
-                                    <p className="text-xs font-bold text-gray-900 truncate">{bill.entity_name}</p>
-                                    <p className="text-[10px] text-gray-400 mt-1">{formatDate(bill.occurred_at)}</p>
-                                </div>
-                                <div className="flex items-center justify-between mt-3">
-                                    <p className={`text-sm font-black ${bill.days_left <= 3 ? 'text-rose-600' : 'text-gray-900'}`}>
-                                        {formatCurrency(bill.amount)}
-                                    </p>
-                                    <button
-                                        onClick={(e) => handleMarkAsPaid(e, bill)}
-                                        className="px-2 py-1 bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase tracking-tighter rounded-md hover:bg-emerald-100 transition-colors"
-                                    >
-                                        PAGAR
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-
-                {/* 4. Clean Feed */}
-                <section>
-                    <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-4 px-1">Actividad Reciente</h3>
-                    <div className="space-y-1">
-                        {history.map((event) => (
-                            <div
-                                key={event.id}
-                                onClick={() => handleEditEvent(event)}
-                                className="group flex items-center justify-between p-4 bg-white rounded-2xl border border-gray-50/50 hover:border-gray-100 transition-colors cursor-pointer active:scale-[0.98]"
-                            >
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${event.type === 'INCOME' ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-50 text-gray-600'
-                                        }`}>
-                                        {event.type === 'INCOME' ? '↓' : '↑'}
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-bold text-gray-900">{event.title}</p>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <p className="text-[10px] text-gray-400 uppercase font-medium">{formatDate(event.occurred_at)}</p>
-                                            {event.entity?.name && (
-                                                <span className="px-1.5 py-0.5 bg-gray-50 text-gray-400 text-[8px] font-bold uppercase rounded border border-gray-100/50">
-                                                    {event.entity.name}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    {isEventIncomplete(event) && (
-                                        <button
-                                            onClick={(e) => handleQuickFix(e, event)}
-                                            className="p-2 bg-rose-50 text-rose-500 rounded-full hover:bg-rose-100 transition-colors"
-                                            title="Completar información"
-                                        >
-                                            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                                            </svg>
-                                        </button>
-                                    )}
-                                    <p className={`text-sm font-black ${event.type === 'INCOME' ? 'text-emerald-600' : 'text-gray-900'
-                                        }`}>
-                                        {event.type === 'INCOME' ? '+' : '-'}{formatCurrency(Math.abs(event.amount))}
-                                    </p>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
+                <RecentActivity history={history} handleEditEvent={handleEditEvent} handleQuickFix={handleQuickFix} handleMarkAsPaid={handleMarkAsPaid} isEventIncomplete={isEventIncomplete} formatCurrency={formatCurrency} formatDate={formatDate} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} swipingId={swipingId} swipeOffset={swipeOffset} touchStart={touchStart} />
             </div>
+
+            <FinanceActionMenu
+                onAction={(type) => {
+                    setFlowType(type);
+                    setIsFlowModalOpen(true);
+                }}
+            />
+
+            <TransactionFlowModal
+                show={isFlowModalOpen}
+                onClose={() => setIsFlowModalOpen(false)}
+                type={flowType}
+                wallets={wallets || []}
+                entities={entities || []}
+            />
         </ZenLayout>
     );
 }
